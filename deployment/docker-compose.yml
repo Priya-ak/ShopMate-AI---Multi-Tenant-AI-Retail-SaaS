@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./data/shopmate.db
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ../data:/app/data
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ../:/app
+    ports:
+      - "3000:3000"
+    command: sh -c "npm install && npm run dev"
+    environment:
+      - PORT=3000
+      - GEMINI_API_KEY=${GEMINI_API_KEY}

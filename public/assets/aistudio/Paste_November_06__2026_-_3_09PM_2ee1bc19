@@ -1,0 +1,1533 @@
+# ONE-SHOT MASTER PROMPT
+# SHOPMATE AI – COMPLETE FULL-STACK AI-POWERED RETAIL COMMERCE SAAS
+## Build the entire application, not a prototype or static UI.
+
+Act as an autonomous senior software engineering team consisting of:
+
+1. Principal Software Architect
+2. Senior Full-Stack Developer
+3. Senior Python Backend Developer
+4. Senior React and TypeScript Developer
+5. Database Architect
+6. AI/ML Engineer
+7. Agentic AI Engineer
+8. UI/UX Designer
+9. Cybersecurity Engineer
+10. QA Automation Engineer
+11. DevOps and Deployment Engineer
+
+Your responsibility is to independently design, develop, integrate, test, debug and complete an entire production-oriented MVP application called **ShopMate AI**.
+
+Do not stop after creating a plan, wireframe, landing page, frontend mockup or dashboard.
+
+Build the complete working application in this execution.
+
+Do not ask me to provide additional prompts to complete individual modules.
+
+Make reasonable engineering decisions independently, follow the specifications below and complete every possible feature.
+
+If the environment has technical limitations, implement the best working alternative, clearly document it and never pretend an unimplemented feature is working.
+
+==================================================
+1. PROJECT OVERVIEW
+==================================================
+
+PRODUCT NAME: ShopMate AI
+
+PRODUCT TYPE: Multi-Tenant AI-Powered Retail Commerce and Management SaaS.
+
+TARGET CUSTOMERS:
+- Clothing shops
+- Saree shops
+- Kurti shops
+- Jewellery stores
+- Electronics stores
+- Footwear stores
+- Wholesale businesses
+- Other retail businesses
+
+PRIMARY BUSINESS PROBLEM:
+
+Retail businesses receive hundreds of customer messages asking about products, colours, sizes, prices, discounts, availability, delivery and orders.
+
+Shop owners cannot manually answer every enquiry.
+
+ShopMate AI will provide an intelligent shopping assistant that interacts with the actual business database, finds products, checks stock, recommends matching products and assists customers with ordering.
+
+The application must also provide a complete retail management dashboard for business owners and employees.
+
+MAIN BUSINESS OBJECTIVE:
+
+Build a reusable SaaS platform where multiple shops can register, manage their own businesses, upload products, manage inventory, receive customer enquiries, process orders and use AI to automate shopping assistance.
+
+Every business must have isolated data.
+
+One shop must never be able to access another shop's products, customers, conversations or orders.
+
+==================================================
+2. REQUIRED TECHNOLOGY ARCHITECTURE
+==================================================
+
+Use a professional, maintainable architecture.
+
+FRONTEND:
+- React
+- TypeScript
+- Vite or the framework supported by the development environment
+- Tailwind CSS
+- shadcn/ui where compatible
+- Responsive design
+- React Router
+- React Query or equivalent server-state management
+- Form validation
+- Reusable components
+
+BACKEND:
+- Python
+- FastAPI
+- Pydantic
+- REST API
+- SQLAlchemy
+- Secure authentication
+- Modular service architecture
+
+DATABASE:
+- SQLite for a completely free local MVP.
+- Keep the schema compatible with PostgreSQL for future migration.
+- Use foreign keys and relationships.
+- Use proper database transactions.
+- Implement migrations or schema initialization.
+
+AI:
+- Gemini API through backend-controlled calls.
+- Use structured JSON responses.
+- Function calling/tool execution.
+- Python-based deterministic fallback.
+- Natural-language product search.
+- Conversation context.
+
+VERSION CONTROL:
+- Git
+- GitHub
+
+DEPLOYMENT:
+- Docker configuration.
+- Environment variables.
+- Free-tier deployment options.
+- Production setup documentation.
+
+IMPORTANT ENVIRONMENT RULE:
+
+First inspect the available Google AI Studio Build environment and its runtime capabilities.
+
+If Python/FastAPI cannot execute inside the hosted preview environment:
+- Still generate the complete Python/FastAPI backend.
+- Generate the complete React frontend.
+- Configure the frontend to communicate with the FastAPI backend.
+- Include all backend requirements and startup commands.
+- Include a working local development setup.
+- Do not silently replace the requested Python backend with fake API responses.
+- Do not claim that a disconnected frontend is a complete application.
+
+If the environment supports a different integrated backend runtime, use it only as a clearly documented deployment adapter while preserving the complete Python backend source.
+
+Do not require paid APIs or paid hosting for the core local application.
+
+==================================================
+3. COMPLETE APPLICATION STRUCTURE
+==================================================
+
+Create a professional SaaS application with these separate interfaces:
+
+A. Public website
+B. Business owner / Admin dashboard
+C. Employee dashboard
+D. Customer shopping interface
+E. AI shopping assistant
+F. Authentication system
+G. Business settings
+H. Analytics and reporting
+
+Every interface must have its own appropriate navigation, permissions and workflows.
+
+==================================================
+4. PUBLIC WEBSITE
+==================================================
+
+Create a complete commercial landing website.
+
+Sections:
+
+1. Navigation bar
+2. ShopMate AI logo and branding
+3. Hero section
+4. Business problem
+5. Our solution
+6. Product features
+7. How the platform works
+8. Benefits
+9. Supported industries
+10. Product screenshots or genuine application previews
+11. Pricing plans
+12. Frequently asked questions
+13. Contact form
+14. Footer
+15. Login page
+16. Registration page
+
+Pricing plans:
+
+STARTER:
+- Small product catalogue
+- Basic product management
+- Customer enquiries
+- Basic AI shopping assistant
+
+PRO:
+- Advanced product catalogue
+- Employee accounts
+- Order management
+- AI recommendations
+- Analytics
+
+BUSINESS:
+- Multiple employees
+- Advanced analytics
+- Advanced integrations
+- Higher usage limits
+
+These are illustrative pricing plans. Do not implement real payment processing unless explicitly configured.
+
+Every navigation link and button must perform its intended action.
+
+==================================================
+5. AUTHENTICATION AND MULTI-TENANT SYSTEM
+==================================================
+
+Implement:
+
+- User registration
+- Business registration
+- Login
+- Logout
+- Password hashing
+- Password recovery flow
+- Session management
+- Protected routes
+- Role-based access control
+- Business-level data isolation
+
+USER ROLES:
+
+1. SUPER ADMIN
+2. BUSINESS OWNER
+3. EMPLOYEE
+4. CUSTOMER
+
+SUPER ADMIN:
+- View platform-level statistics.
+- View registered businesses.
+- Manage platform settings.
+- Suspend or activate businesses.
+- View system health.
+
+BUSINESS OWNER:
+- Manage business profile.
+- Manage employees.
+- Manage products.
+- Manage categories.
+- Manage inventory.
+- Manage customers.
+- Manage orders.
+- Access analytics.
+- Configure AI.
+- Configure integrations.
+
+EMPLOYEE:
+- View permitted products.
+- Check stock.
+- Manage assigned enquiries.
+- Process orders.
+- Update permitted order statuses.
+
+CUSTOMER:
+- Search products.
+- Chat with the shopping assistant.
+- View product information.
+- Add products to cart.
+- Place orders.
+- View order history.
+- Track orders.
+
+Security requirements:
+
+- Hash passwords using a suitable password hashing algorithm.
+- Use secure sessions or properly implemented JWT authentication.
+- Validate authentication on the backend.
+- Never trust frontend role information.
+- Verify business ownership on every business-specific API.
+- Prevent insecure direct object references.
+- Prevent cross-tenant data access.
+- Apply rate limits to sensitive endpoints.
+- Do not store secrets in frontend code.
+
+==================================================
+6. BUSINESS OWNER DASHBOARD
+==================================================
+
+Build a professional dashboard.
+
+Display:
+
+- Total revenue
+- Total orders
+- Pending orders
+- Completed orders
+- Total customers
+- Total products
+- Low-stock products
+- Out-of-stock products
+- Recent enquiries
+- Recent orders
+- Best-selling products
+- Sales trends
+- Inventory overview
+
+Dashboard filters:
+
+- Today
+- Last 7 days
+- Last 30 days
+- Last 90 days
+- Custom date range
+
+All statistics must be calculated using actual database records.
+
+Do not display random numbers or hardcoded charts.
+
+SIDEBAR:
+
+- Dashboard
+- Products
+- Categories
+- Product Variants
+- Inventory
+- Customers
+- Orders
+- AI Assistant
+- Conversations
+- Employees
+- Analytics
+- Integrations
+- Settings
+- Logout
+
+==================================================
+7. COMPLETE PRODUCT MANAGEMENT
+==================================================
+
+Create a full product management module.
+
+PRODUCT FIELDS:
+
+- Product ID
+- Business ID
+- Product name
+- SKU
+- Product description
+- Category
+- Brand
+- Regular price
+- Discount price
+- Colour
+- Sizes
+- Product images
+- Available quantity
+- Minimum stock threshold
+- Availability status
+- Created timestamp
+- Updated timestamp
+
+FEATURES:
+
+- Add product
+- View product
+- Edit product
+- Delete product
+- Archive product
+- Upload multiple product images
+- Preview images
+- Search products
+- Filter products
+- Sort products
+- Paginate results
+- Bulk import through CSV
+- Export products to CSV
+- Validate duplicate SKUs
+- Validate product prices
+
+FILTERS:
+
+- Product name
+- Category
+- Colour
+- Size
+- Minimum price
+- Maximum price
+- Availability
+- Stock level
+
+Create a professional product catalogue with product image previews.
+
+All CRUD operations must persist in the database.
+
+==================================================
+8. PRODUCT CATEGORY MANAGEMENT
+==================================================
+
+Allow the business owner to create, update, view and delete categories.
+
+Example categories:
+
+- Sarees
+- Kurtis
+- Dresses
+- Shirts
+- T-shirts
+- Jeans
+- Footwear
+- Accessories
+- Jewellery
+
+Requirements:
+
+- Category name
+- Description
+- Category image
+- Business ownership
+- Product count
+
+Prevent deleting categories that contain products unless those products are reassigned or the owner confirms a safe operation.
+
+==================================================
+9. PRODUCT VARIANT AND INVENTORY MANAGEMENT
+==================================================
+
+A product may have multiple sizes and colours.
+
+Example:
+
+Product: Cotton Kurti
+
+Variants:
+
+- Red / S
+- Red / M
+- Red / L
+- Blue / S
+- Blue / M
+- Blue / L
+
+Each variant must have its own stock quantity and SKU where appropriate.
+
+Implement:
+
+- Variant creation
+- Variant editing
+- Variant deletion
+- Stock adjustment
+- Stock history
+- Low-stock alerts
+- Out-of-stock alerts
+- Inventory transaction history
+
+IMPORTANT:
+
+Inventory must be variant-aware.
+
+Do not assume that all sizes and colours have the same stock quantity.
+
+Maintain an inventory movement ledger.
+
+When an order is placed, reserve or deduct stock safely using a database transaction.
+
+Prevent overselling.
+
+When an order is cancelled, restore stock only if it was previously deducted or reserved.
+
+Prevent duplicate restoration.
+
+==================================================
+10. CUSTOMER MANAGEMENT
+==================================================
+
+Implement full customer management.
+
+Fields:
+
+- Customer ID
+- Name
+- Phone number
+- Email
+- Address
+- City
+- State
+- Postal code
+- Registration date
+- Business ID
+
+Features:
+
+- Create customer
+- View customer
+- Update customer
+- Delete or archive customer
+- Search customer
+- View purchase history
+- View total orders
+- View total spending
+- View conversations
+
+Validate phone numbers and email addresses appropriately.
+
+==================================================
+11. COMPLETE ORDER MANAGEMENT
+==================================================
+
+Build an order management system.
+
+ORDER FIELDS:
+
+- Order ID
+- Business ID
+- Customer ID
+- Order number
+- Order date
+- Order items
+- Quantity
+- Unit price snapshot
+- Discount
+- Tax if applicable
+- Total amount
+- Delivery address
+- Payment method
+- Payment status
+- Order status
+
+ORDER STATUSES:
+
+- Pending
+- Confirmed
+- Processing
+- Packed
+- Shipped
+- Delivered
+- Cancelled
+
+FEATURES:
+
+- Create order
+- View order
+- Edit permitted details
+- Cancel order
+- View order items
+- Update order status
+- Search orders
+- Filter orders
+- Export order reports
+- View customer order history
+- Generate order receipt
+
+ORDER CREATION RULES:
+
+1. Validate the customer.
+2. Validate the product.
+3. Validate the selected variant.
+4. Check actual available inventory.
+5. Calculate prices on the backend.
+6. Recalculate discounts on the backend.
+7. Create the order using a database transaction.
+8. Update inventory consistently.
+9. Store the order item price snapshot.
+10. Return a confirmed order number.
+
+Do not trust prices supplied by the frontend.
+
+Require customer confirmation before final order creation.
+
+==================================================
+12. CUSTOMER SHOPPING INTERFACE
+==================================================
+
+Create a modern WhatsApp-inspired shopping experience.
+
+The interface must include:
+
+- Business logo and name
+- Chat conversation area
+- Customer message input
+- AI assistant messages
+- Product cards
+- Product image previews
+- Product prices
+- Available sizes
+- Available colours
+- Stock information
+- Add to cart
+- Remove from cart
+- Quantity selection
+- Order summary
+- Customer details form
+- Order confirmation
+- Order tracking
+
+CUSTOMER EXPERIENCE:
+
+A customer should be able to discover products through natural-language messages rather than manually browsing every category.
+
+Example:
+
+Customer:
+"Show me red kurtis below ₹1,500."
+
+Assistant:
+Search the actual database and show all matching products.
+
+Customer:
+"Show me size M."
+
+Assistant:
+Filter actual product variants and show size M availability.
+
+Customer:
+"Do you have blue also?"
+
+Assistant:
+Find the matching blue variants and show their actual prices and stock.
+
+Customer:
+"I want two pieces."
+
+Assistant:
+Check whether the selected variant has at least two available pieces.
+
+Customer:
+"Place my order."
+
+Assistant:
+Collect the required customer and delivery information, display the complete order summary and ask for confirmation.
+
+Only after confirmation should the system create the order.
+
+==================================================
+13. AI SHOPPING AGENT – CORE INTELLIGENCE
+==================================================
+
+Build a real agentic shopping assistant.
+
+This must not be a generic chatbot.
+
+The AI must be connected to the business's actual database through backend-controlled tools.
+
+ARCHITECTURE:
+
+Customer message
+→ Backend API
+→ Intent recognition
+→ AI agent
+→ Tool selection
+→ Backend tool execution
+→ Database query
+→ Structured tool result
+→ AI response
+→ Customer interface
+
+IMPLEMENT THESE TOOLS:
+
+1. search_products
+2. get_product_details
+3. get_product_variants
+4. check_inventory
+5. search_categories
+6. get_customer_details
+7. create_customer
+8. calculate_cart_total
+9. create_order
+10. get_order_status
+11. get_recommendations
+
+Each tool must:
+
+- Validate input.
+- Verify business ownership.
+- Query the actual database.
+- Return structured results.
+- Handle errors.
+- Never expose unauthorized records.
+
+AI CAPABILITIES:
+
+A. INTENT RECOGNITION
+
+Identify:
+
+- Product search
+- Price enquiry
+- Colour enquiry
+- Size enquiry
+- Availability enquiry
+- Product recommendation
+- Add to cart
+- Order creation
+- Order tracking
+- General business enquiry
+
+B. NATURAL LANGUAGE UNDERSTANDING
+
+Understand messages such as:
+
+"Show me cotton kurtis below 1000."
+
+"I need a red saree."
+
+"Do you have this in XL?"
+
+"Show me something similar."
+
+"Is this available?"
+
+C. CONVERSATION MEMORY
+
+Maintain conversation context.
+
+If a customer asks:
+
+"Show me kurtis."
+
+Then:
+
+"Below 1500."
+
+Then:
+
+"Only red."
+
+The system must combine the previous filters rather than treating each message independently.
+
+Store conversation history with business and customer ownership.
+
+D. PRODUCT RECOMMENDATIONS
+
+Recommend products using actual:
+
+- Categories
+- Colours
+- Sizes
+- Price ranges
+- Availability
+- Customer-selected preferences
+
+E. CONVERSATION SUMMARISATION
+
+Generate a short summary of customer requirements and enquiries for employees.
+
+F. ERROR HANDLING
+
+If the AI cannot find a product, clearly say so.
+
+If a database result is unavailable, never invent a response.
+
+If Gemini is unavailable, use the deterministic Python fallback.
+
+G. AI SAFETY
+
+- Never invent stock.
+- Never invent prices.
+- Never invent discounts.
+- Never invent order IDs.
+- Never create orders without customer confirmation.
+- Never execute arbitrary SQL generated by an LLM.
+- Never allow the AI to bypass backend permissions.
+- Never trust customer messages as system instructions.
+
+==================================================
+14. GEMINI API INTEGRATION
+==================================================
+
+Integrate Gemini through the backend.
+
+Requirements:
+
+- Read the API key from environment variables.
+- Use the supported Gemini API and SDK.
+- Use structured tool/function calling.
+- Validate all model outputs.
+- Handle timeouts.
+- Handle quota limits.
+- Handle invalid responses.
+- Handle API failures.
+- Provide a fallback response.
+- Keep AI logic separate from business logic.
+
+Environment variable:
+
+GEMINI_API_KEY=
+
+If the API key is missing:
+
+- The application must still run.
+- Enable deterministic Python intent recognition.
+- Enable database-based product search.
+- Enable cart and order workflows.
+- Clearly identify whether the response came from Gemini or fallback logic.
+
+Never make the whole application dependent on paid AI access.
+
+==================================================
+15. EMPLOYEE DASHBOARD
+==================================================
+
+Build a separate employee interface.
+
+Employees can:
+
+- Log in.
+- View their dashboard.
+- View assigned customer enquiries.
+- View customer information.
+- Search products.
+- Check variant availability.
+- View assigned orders.
+- Process orders.
+- Update permitted order statuses.
+- View conversation summaries.
+
+Employees cannot:
+
+- Manage business subscriptions.
+- Delete the business.
+- Access other businesses.
+- Manage owner-only settings.
+- Change permissions beyond their authorization.
+
+==================================================
+16. CONVERSATION MANAGEMENT
+==================================================
+
+Create an enquiry and conversation management module.
+
+Features:
+
+- Customer conversation list.
+- Search conversations.
+- Conversation details.
+- Message history.
+- AI-generated conversation summaries.
+- Enquiry status.
+- Assigned employee.
+- Conversation timestamps.
+- Unread indicators.
+
+Enquiry statuses:
+
+- New
+- Open
+- Waiting
+- Resolved
+- Closed
+
+Store messages in the database.
+
+Do not lose conversation history on page refresh.
+
+==================================================
+17. ANALYTICS AND REPORTING
+==================================================
+
+Build reports using actual database information.
+
+Reports:
+
+- Daily sales
+- Weekly sales
+- Monthly sales
+- Revenue trends
+- Order trends
+- Product performance
+- Best-selling products
+- Category performance
+- Customer acquisition
+- Repeat customers
+- Low-stock report
+- Out-of-stock report
+- Order cancellation report
+
+Provide date filters.
+
+Use charts only when backed by actual data.
+
+Implement CSV export.
+
+Clearly distinguish revenue, order count and profit. Do not calculate profit unless product cost data exists.
+
+==================================================
+18. WHATSAPP INTEGRATION ARCHITECTURE
+==================================================
+
+For the MVP, implement a WhatsApp-style simulator.
+
+Create an integration settings page with:
+
+- WhatsApp connection status
+- Business phone number
+- Integration status
+- Webhook configuration placeholders
+- Message templates
+- Connection instructions
+
+Prepare a modular webhook endpoint:
+
+POST /webhooks/whatsapp
+
+Implement request validation and webhook verification architecture.
+
+Do not falsely claim that actual WhatsApp messages are being received or sent.
+
+Actual Meta WhatsApp Cloud API integration must remain an optional production extension requiring valid credentials, business verification where applicable and explicit setup.
+
+==================================================
+19. DATABASE ARCHITECTURE
+==================================================
+
+Create normalized relational database tables.
+
+Required tables:
+
+- businesses
+- users
+- roles
+- business_members
+- products
+- product_categories
+- product_variants
+- inventory
+- inventory_movements
+- customers
+- orders
+- order_items
+- conversations
+- messages
+- employee_assignments
+- integrations
+- audit_logs
+- password_reset_tokens
+
+Use:
+
+- UUID or suitable unique identifiers.
+- Primary keys.
+- Foreign keys.
+- Unique constraints.
+- Database indexes.
+- Timestamps.
+- Appropriate cascade rules.
+- Business ID isolation.
+
+Create database migrations or a reliable initialization process.
+
+Implement database transactions for all critical operations.
+
+Create an ER diagram in Mermaid.
+
+==================================================
+20. API DEVELOPMENT
+==================================================
+
+Implement REST endpoints.
+
+AUTH:
+- POST /api/auth/register
+- POST /api/auth/login
+- POST /api/auth/logout
+- GET /api/auth/me
+- POST /api/auth/forgot-password
+- POST /api/auth/reset-password
+
+BUSINESSES:
+- GET /api/businesses/me
+- PUT /api/businesses/me
+
+PRODUCTS:
+- GET /api/products
+- POST /api/products
+- GET /api/products/{id}
+- PUT /api/products/{id}
+- DELETE /api/products/{id}
+
+CATEGORIES:
+- GET /api/categories
+- POST /api/categories
+- PUT /api/categories/{id}
+- DELETE /api/categories/{id}
+
+VARIANTS:
+- GET /api/products/{id}/variants
+- POST /api/products/{id}/variants
+- PUT /api/variants/{id}
+- DELETE /api/variants/{id}
+
+INVENTORY:
+- GET /api/inventory
+- PUT /api/inventory/{id}
+- GET /api/inventory/movements
+
+CUSTOMERS:
+- GET /api/customers
+- POST /api/customers
+- GET /api/customers/{id}
+- PUT /api/customers/{id}
+- DELETE /api/customers/{id}
+
+ORDERS:
+- GET /api/orders
+- POST /api/orders
+- GET /api/orders/{id}
+- PUT /api/orders/{id}/status
+- POST /api/orders/{id}/cancel
+
+AI:
+- POST /api/ai/chat
+- POST /api/ai/search-products
+- POST /api/ai/recommendations
+- POST /api/ai/summarise
+
+CONVERSATIONS:
+- GET /api/conversations
+- GET /api/conversations/{id}
+- POST /api/conversations
+- GET /api/conversations/{id}/messages
+
+EMPLOYEES:
+- GET /api/employees
+- POST /api/employees
+- PUT /api/employees/{id}
+- DELETE /api/employees/{id}
+
+ANALYTICS:
+- GET /api/analytics/overview
+- GET /api/analytics/sales
+- GET /api/analytics/products
+- GET /api/analytics/inventory
+
+INTEGRATIONS:
+- GET /api/integrations
+- PUT /api/integrations/{id}
+
+Use appropriate HTTP methods, status codes, authentication and authorization.
+
+Generate OpenAPI documentation through FastAPI.
+
+==================================================
+21. UI/UX DESIGN SYSTEM
+==================================================
+
+Design a premium, professional SaaS application.
+
+VISUAL STYLE:
+
+- Modern retail technology platform.
+- Clean professional interface.
+- Consistent spacing.
+- Strong visual hierarchy.
+- Premium typography.
+- Professional colour palette.
+- Modern dashboard cards.
+- Consistent icons.
+- Clear navigation.
+- Responsive layout.
+
+PAGES MUST INCLUDE:
+
+- Landing page
+- Registration
+- Login
+- Forgot password
+- Admin dashboard
+- Products
+- Add product
+- Edit product
+- Categories
+- Inventory
+- Customers
+- Orders
+- Order details
+- Employees
+- Conversations
+- AI assistant
+- Analytics
+- Settings
+- Customer shopping page
+- Employee dashboard
+- Super admin dashboard
+
+UX REQUIREMENTS:
+
+- Search.
+- Filters.
+- Sorting.
+- Pagination.
+- Form validation.
+- Loading indicators.
+- Empty states.
+- Error states.
+- Success notifications.
+- Confirmation dialogs.
+- Accessible labels.
+- Responsive navigation.
+- Mobile-friendly product cards.
+
+Do not use dead links or non-functional buttons.
+
+Do not use arbitrary static numbers to make the dashboard look populated.
+
+==================================================
+22. DEMONSTRATION DATA
+==================================================
+
+Seed the database with at least 30 realistic sample products.
+
+Include:
+
+- Kurtis
+- Sarees
+- Shirts
+- T-shirts
+- Dresses
+- Jeans
+- Footwear
+- Accessories
+
+Each product must contain:
+
+- Name
+- SKU
+- Category
+- Price
+- Discount price where applicable
+- Description
+- Multiple colours where applicable
+- Multiple sizes where applicable
+- Variant-level stock
+- Product image
+
+Use suitable publicly accessible sample product images or locally stored placeholders.
+
+Never use broken image links.
+
+Provide a clearly labelled demonstration business and demo customer.
+
+Create a demo owner account through a safe seed process.
+
+Do not hardcode production credentials.
+
+Provide clear instructions for creating a local demonstration account.
+
+==================================================
+23. ERROR HANDLING AND RELIABILITY
+==================================================
+
+This is mandatory.
+
+Implement:
+
+- Global frontend error boundary.
+- Backend exception handling.
+- API error responses.
+- Database connection handling.
+- Database transaction rollback.
+- Input validation.
+- Missing-field validation.
+- Invalid ID handling.
+- Duplicate record handling.
+- Authentication error handling.
+- Authorization error handling.
+- AI timeout handling.
+- AI quota handling.
+- Image upload validation.
+- File size validation.
+- Network failure handling.
+- Empty database handling.
+- Invalid order handling.
+- Inventory conflict handling.
+
+Never silently swallow errors.
+
+Display useful user-facing messages without exposing internal stack traces or secrets.
+
+==================================================
+24. AUTOMATED TESTING
+==================================================
+
+Create automated tests.
+
+BACKEND TESTS:
+
+- Registration.
+- Login.
+- Logout.
+- Password hashing.
+- Role permissions.
+- Business isolation.
+- Product creation.
+- Product updates.
+- Product deletion.
+- Product search.
+- Price filters.
+- Colour filters.
+- Size filters.
+- Inventory checking.
+- Stock adjustment.
+- Order creation.
+- Order cancellation.
+- Inventory restoration.
+- Customer management.
+- AI tool execution.
+- Gemini fallback.
+- Conversation history.
+
+FRONTEND TESTS:
+
+- Login.
+- Navigation.
+- Product forms.
+- Product search.
+- Cart.
+- Order creation.
+- Dashboard loading.
+- Error states.
+- Role-specific interfaces.
+
+INTEGRATION TESTS:
+
+- Customer message to AI tool.
+- AI tool to product database.
+- Product search to customer results.
+- Customer confirmation to order creation.
+- Order creation to inventory update.
+- Order cancellation to inventory restoration.
+
+Use appropriate testing frameworks.
+
+Fix all test failures that are within the application code.
+
+==================================================
+25. SECURITY AUDIT
+==================================================
+
+Check:
+
+- Password storage.
+- Authentication.
+- Authorization.
+- Session security.
+- CORS.
+- SQL injection protection.
+- Cross-business access.
+- Input validation.
+- API rate limiting.
+- File upload restrictions.
+- Environment secrets.
+- Error message leakage.
+- Order manipulation.
+- Price manipulation.
+- Inventory manipulation.
+- AI prompt injection.
+- Unauthorized AI tool execution.
+
+Do not trust any data received from the frontend.
+
+The backend must independently validate every important operation.
+
+==================================================
+26. COMPLETE PROJECT DOCUMENTATION
+==================================================
+
+Generate a complete project repository.
+
+Recommended structure:
+
+shopmate-ai/
+    frontend/
+        src/
+            components/
+            pages/
+            layouts/
+            hooks/
+            services/
+            context/
+            types/
+            utils/
+
+    backend/
+        app/
+            api/
+            models/
+            schemas/
+            services/
+            agents/
+            ml/
+            core/
+            database/
+            tests/
+            main.py
+
+    database/
+        migrations/
+        schema.sql
+        seed.py
+
+    docs/
+        architecture.md
+        data-flow.md
+        database-erd.md
+        api-documentation.md
+        security.md
+        testing.md
+        deployment.md
+
+    deployment/
+        Dockerfile
+        docker-compose.yml
+
+    .env.example
+    .gitignore
+    README.md
+
+Include:
+
+1. Complete README.
+2. Business problem.
+3. Project objectives.
+4. Architecture.
+5. Technology stack.
+6. Architecture diagram.
+7. Data-flow diagram.
+8. Database ER diagram.
+9. API documentation.
+10. Installation guide.
+11. Environment variable guide.
+12. Backend startup instructions.
+13. Frontend startup instructions.
+14. Database setup.
+15. Sample account instructions.
+16. Test instructions.
+17. Deployment instructions.
+18. Known limitations.
+19. Future improvements.
+
+Never put real API keys, passwords or secrets in the repository.
+
+==================================================
+27. DEPLOYMENT AND EXECUTION
+==================================================
+
+Prepare the application for local execution.
+
+Provide:
+
+- Frontend setup.
+- Backend setup.
+- Python virtual environment setup.
+- Dependency installation.
+- Database initialization.
+- Sample data seeding.
+- Gemini API configuration.
+- Environment configuration.
+- Development server startup.
+- Production build instructions.
+
+Generate Docker configuration if supported.
+
+Document free-tier hosting options and limitations.
+
+Do not claim deployment is complete without a verified working deployment URL.
+
+The local application must not require paid hosting.
+
+==================================================
+28. FINAL ACCEPTANCE TEST
+==================================================
+
+Before declaring completion, verify the following complete user journey.
+
+SCENARIO:
+
+A clothing store registers on ShopMate AI.
+
+1. The owner registers an account.
+2. The owner creates a business.
+3. The owner logs into the admin dashboard.
+4. The owner creates product categories.
+5. The owner adds 30 products.
+6. The owner adds different product variants.
+7. The owner updates stock.
+8. The owner creates an employee account.
+9. A customer opens the shopping simulator.
+10. The customer asks: "Show me red kurtis below ₹1,500."
+11. The AI identifies the search intent.
+12. The backend searches the database.
+13. The system returns actual matching products.
+14. The customer selects a product.
+15. The customer selects size M.
+16. The system checks size-specific inventory.
+17. The customer adds two items to the cart.
+18. The system validates available quantity.
+19. The customer enters delivery information.
+20. The system displays an order summary.
+21. The customer confirms the order.
+22. The backend creates the order.
+23. Inventory is updated correctly.
+24. The owner sees the new order.
+25. The employee processes the order.
+26. The owner updates the order status.
+27. The customer can view the order status.
+28. The dashboard displays updated business statistics.
+29. Conversation history remains available after refresh.
+30. Another business cannot access the first business's data.
+
+Also test:
+- Insufficient stock.
+- Invalid product.
+- Invalid variant.
+- Duplicate SKU.
+- Invalid login.
+- Unauthorized access.
+- Cancelled order.
+- Gemini API unavailable.
+- Empty product catalogue.
+- Invalid customer information.
+
+Every scenario must produce a correct result or a meaningful error message.
+
+==================================================
+29. AUTONOMOUS DEVELOPMENT INSTRUCTIONS
+==================================================
+
+Do not stop at planning.
+
+Do not ask me to approve every individual file.
+
+Do not ask me to send another prompt for each module.
+
+Do not generate only a demonstration frontend.
+
+Do not replace database functionality with hardcoded arrays.
+
+Do not create buttons without actions.
+
+Do not invent API responses.
+
+Do not leave major modules disconnected.
+
+Do not mark features complete unless they work.
+
+Independently:
+
+1. Inspect the available development environment.
+2. Select compatible implementation details.
+3. Create the complete project structure.
+4. Implement frontend.
+5. Implement backend.
+6. Implement database.
+7. Implement authentication.
+8. Implement all CRUD modules.
+9. Implement AI shopping agent.
+10. Integrate all interfaces.
+11. Create demonstration data.
+12. Run the application.
+13. Execute tests.
+14. Identify errors.
+15. Fix errors.
+16. Retest.
+17. Verify the complete customer journey.
+18. Generate documentation.
+19. Provide exact execution instructions.
+
+If you encounter a tool, API or environment limitation, implement the best safe fallback and document it.
+
+Continue working until all feasible MVP acceptance criteria are satisfied.
+
+==================================================
+30. FINAL COMPLETION REPORT
+==================================================
+
+At the end, provide a clear report containing:
+
+A. APPLICATION SUMMARY
+- What has been built.
+- Business problem solved.
+- Main application features.
+
+B. ARCHITECTURE
+- Architecture type.
+- Frontend.
+- Backend.
+- Database.
+- AI architecture.
+- Data flow.
+
+C. IMPLEMENTATION
+- Completed modules.
+- Backend APIs.
+- Database tables.
+- AI tools.
+- Authentication.
+- User roles.
+
+D. TESTING
+- Tests executed.
+- Tests passed.
+- Tests failed.
+- Bugs identified.
+- Bugs fixed.
+- Known limitations.
+
+E. EXECUTION
+- How to run the application.
+- Required installations.
+- Environment variables.
+- Demo account setup.
+
+F. DELIVERABLES
+- Project source code.
+- README.
+- Architecture diagrams.
+- Database ER diagram.
+- API documentation.
+- Screenshots.
+- GitHub setup instructions.
+- Deployment instructions.
+
+G. HONEST COMPLETION STATUS
+
+For every feature, mark one of:
+
+- COMPLETED AND TESTED
+- IMPLEMENTED BUT NOT FULLY TESTED
+- PARTIALLY IMPLEMENTED
+- NOT IMPLEMENTED
+- BLOCKED BY ENVIRONMENT
+
+Do not falsely report success.
+
+FINAL INSTRUCTION:
+
+Build ShopMate AI as a complete, integrated, professional retail SaaS application.
+
+Prioritize real business functionality, secure architecture, correct database operations, genuine AI integration and reliable user workflows.
+
+The application must be suitable for demonstration to a real retail business owner and for technical evaluation during an AI/ML Engineer or Full-Stack Developer interview.
+
+START BUILDING THE COMPLETE APPLICATION NOW.
+
+Do not return only a plan. Execute the development task.

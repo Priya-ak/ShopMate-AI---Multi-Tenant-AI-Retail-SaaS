@@ -1,0 +1,6 @@
+{
+  "name": "ShopMate AI - Multi-Tenant Retail Assistant & POS",
+  "description": "Full-stack multi-tenant AI retail management platform with intelligent shopping assistant, catalog inventory ledger, and order dispatch workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
