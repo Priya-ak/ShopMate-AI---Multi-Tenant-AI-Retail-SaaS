@@ -22,6 +22,7 @@ import { IntegrationsPage } from './pages/IntegrationsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SuperAdminDashboard } from './pages/SuperAdminDashboard';
 import { CustomerShoppingPage } from './pages/CustomerShoppingPage';
+import { AppAssistantPage } from './pages/AppAssistantPage';
 import { Order } from './types';
 
 function MainApp() {
@@ -113,10 +114,19 @@ function MainApp() {
             <ForgotPasswordPage onBackToLogin={() => navigateTo('login')} />
           )}
 
-          {currentView === 'shopping' && (
+          {currentView === 'shopping' && user && (
             <CustomerShoppingPage
               openCartDrawer={() => setIsCartOpen(true)}
               onBack={goBack}
+            />
+          )}
+
+          {/* Signed-out visitors get the public ShopMate AI help assistant (no store, no cart) */}
+          {currentView === 'shopping' && !user && (
+            <AppAssistantPage
+              onBack={goBack}
+              onOpenLogin={() => navigateTo('login')}
+              onOpenRegister={() => navigateTo('register')}
             />
           )}
 

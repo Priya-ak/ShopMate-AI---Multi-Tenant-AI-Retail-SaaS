@@ -54,6 +54,11 @@ npx tsx server/test_suite.ts
 npm run dev
 ```
 
+### Deploying on Vercel + Supabase
+The API runs as a Vercel serverless function backed by Supabase Postgres; SQLite stays the zero-config local default.
+See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for `DATABASE_URL`, `SESSION_SECRET`, Google sign-in and the
+Super Admin portal (`/superadmin`) setup.
+
 ### Running with Docker Compose
 ```bash
 cd deployment

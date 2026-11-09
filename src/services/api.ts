@@ -91,6 +91,50 @@ export const api = {
     return res.json();
   },
 
+  async getAuthConfig(): Promise<{ googleClientId: string | null }> {
+    try {
+      const res = await fetch(`${API_BASE}/auth/config`);
+      if (!res.ok) return { googleClientId: null };
+      const data = await res.json();
+      return { googleClientId: data.googleClientId || null };
+    } catch {
+      return { googleClientId: null };
+    }
+  },
+
+  /** Sign in / register with a Google ID token (verified server-side). */
+  async googleAuth(body: {
+    credential: string;
+    mode: 'login' | 'register';
+    name?: string;
+    phone?: string;
+    businessName?: string;
+    businessCategory?: string;
+  }) {
+    const res = await fetch(`${API_BASE}/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Google sign-in failed' }));
+      const e: any = new Error(err.error || 'Google sign-in failed');
+      e.code = err.code;
+      throw e;
+    }
+    return res.json();
+  },
+
+  /** Public "ShopMate AI" help assistant (no store, no login). */
+  async askAppAssistant(message: string, history: Array<{ role: string; content: string }>) {
+    const res = await fetch(`${API_BASE}/ai/assistant`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history }),
+    });
+    return safeJson<{ reply: string; engine: string }>(res, 'The assistant is unavailable right now');
+  },
+
   // Business
   async getBusinessMe(): Promise<Business> {
     const res = await fetch(`${API_BASE}/businesses/me`, { headers: getAuthHeaders() });
@@ -104,7 +148,7 @@ export const api = {
       headers: getAuthHeaders(),
       body: JSON.stringify(data),
     });
-    return res.json();
+    return safeJson(res, 'Failed to update store settings');
   },
 
   async getSuperAdminBusinesses() {

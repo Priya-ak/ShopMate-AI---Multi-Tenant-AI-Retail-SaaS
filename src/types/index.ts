@@ -8,6 +8,8 @@ export interface User {
   business_id: string | null;
   phone?: string;
   created_at?: string;
+  is_demo?: boolean;
+  auth_provider?: string;
 }
 
 export interface Business {
@@ -21,6 +23,9 @@ export interface Business {
   currency: string;
   ai_greeting: string;
   is_active: number;
+  assistant_name?: string;
+  suggested_questions?: string[] | null;
+  is_demo?: number | boolean;
 }
 
 export interface ProductCategory {

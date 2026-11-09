@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Store, Lock, Mail, ArrowRight, AlertCircle, Sparkles } from 'lucide-react';
+import { GoogleAuthButton } from '../components/GoogleAuthButton';
 
 interface LoginPageProps {
   onSuccess: (loggedInUser?: any) => void;
@@ -14,7 +15,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
   onGoToRegister,
   onGoToForgotPassword,
 }) => {
-  const { login, switchDemoRole } = useAuth();
+  const { login, switchDemoRole, googleAuth } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -29,6 +30,19 @@ export const LoginPage: React.FC<LoginPageProps> = ({
       onSuccess(loggedInUser);
     } catch (err: any) {
       setErrorMsg(err.message || 'Login failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogle = async (credential: string) => {
+    setErrorMsg(null);
+    setIsLoading(true);
+    try {
+      const u = await googleAuth({ credential, mode: 'login' });
+      onSuccess(u);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Google sign-in failed');
     } finally {
       setIsLoading(false);
     }
@@ -112,6 +126,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
+
+        {/* Google sign-in */}
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 text-[10px] uppercase tracking-wider text-slate-500">
+            <span className="flex-1 h-px bg-slate-800" />
+            <span>or</span>
+            <span className="flex-1 h-px bg-slate-800" />
+          </div>
+          <GoogleAuthButton onCredential={handleGoogle} text="signin_with" />
+        </div>
 
         {/* Demo Fast Logins */}
         <div className="pt-2 border-t border-slate-800 space-y-2">

@@ -25,6 +25,8 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, setCurrentView, ope
   const { user, business, logout, currentBusinessId } = useAuth();
   const { totalCount } = useCart();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  // The public (signed-out) assistant is a help bot for the app itself - it has no store, so no cart.
+  const showCart = !(currentView === 'shopping' && !user);
 
   return (
     <header className="sticky top-0 z-40 bg-slate-900 border-b border-slate-800 text-white shadow-md">
@@ -78,18 +80,20 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, setCurrentView, ope
             </button>
 
             {/* Cart Trigger */}
-            <button
-              onClick={openCartDrawer}
-              className="relative p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition"
-              title="Shopping Cart"
-            >
-              <ShoppingCart className="w-4 h-4" />
-              {totalCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-indigo-500 text-white font-bold text-[10px] w-4 h-4 rounded-full flex items-center justify-center">
-                  {totalCount}
-                </span>
-              )}
-            </button>
+            {showCart && (
+              <button
+                onClick={openCartDrawer}
+                className="relative p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 transition"
+                title="Shopping Cart"
+              >
+                <ShoppingCart className="w-4 h-4" />
+                {totalCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-indigo-500 text-white font-bold text-[10px] w-4 h-4 rounded-full flex items-center justify-center">
+                    {totalCount}
+                  </span>
+                )}
+              </button>
+            )}
 
             {/* Main Navigation or Auth */}
             {user ? (
@@ -152,17 +156,19 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, setCurrentView, ope
 
           {/* Mobile menu button */}
           <div className="flex md:hidden items-center gap-2">
-            <button
-              onClick={openCartDrawer}
-              className="relative p-2 rounded-lg text-slate-300 hover:text-white"
-            >
-              <ShoppingCart className="w-5 h-5" />
-              {totalCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-indigo-500 text-white font-bold text-[10px] w-4 h-4 rounded-full flex items-center justify-center">
-                  {totalCount}
-                </span>
-              )}
-            </button>
+            {showCart && (
+              <button
+                onClick={openCartDrawer}
+                className="relative p-2 rounded-lg text-slate-300 hover:text-white"
+              >
+                <ShoppingCart className="w-5 h-5" />
+                {totalCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-indigo-500 text-white font-bold text-[10px] w-4 h-4 rounded-full flex items-center justify-center">
+                    {totalCount}
+                  </span>
+                )}
+              </button>
+            )}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="p-2 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800"

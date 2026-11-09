@@ -9,7 +9,7 @@ interface SettingsPageProps {
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack }) => {
-  const { business } = useAuth();
+  const { business, refreshBusiness } = useAuth();
   const [name, setName] = useState('');
   const [category, setCategory] = useState('');
   const [phone, setPhone] = useState('');
@@ -17,6 +17,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack }) => {
   const [address, setAddress] = useState('');
   const [currency, setCurrency] = useState('₹');
   const [aiGreeting, setAiGreeting] = useState('');
+  const [assistantName, setAssistantName] = useState('ShopMate AI');
+  const [questionsText, setQuestionsText] = useState('');
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -30,6 +32,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack }) => {
       setAddress(business.address || '');
       setCurrency(business.currency || '₹');
       setAiGreeting(business.ai_greeting || '');
+      setAssistantName(business.assistant_name || 'ShopMate AI');
+      setQuestionsText((business.suggested_questions || []).join('\n'));
     }
   }, [business]);
 
@@ -38,6 +42,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack }) => {
     setIsLoading(true);
     setSavedSuccess(false);
     setErrorMsg(null);
+    const questions = questionsText
+      .split('\n')
+      .map((q) => q.trim())
+      .filter(Boolean);
+    if (!assistantName.trim()) {
+      setErrorMsg('Please give your assistant a name.');
+      setIsLoading(false);
+      return;
+    }
+    if (questions.length > 8 || questions.some((q) => q.length > 80)) {
+      setErrorMsg('Use at most 8 suggested questions, each up to 80 characters.');
+      setIsLoading(false);
+      return;
+    }
     try {
       await api.updateBusiness({
         name,
@@ -46,7 +64,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack }) => {
         address,
         currency,
         ai_greeting: aiGreeting,
+        assistant_name: assistantName.trim(),
+        suggested_questions: questions,
       });
+      await refreshBusiness();
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 3000);
     } catch (err: any) {
@@ -162,6 +183,22 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack }) => {
         </div>
 
         <div>
+          <label className="block text-slate-300 font-medium mb-1">Assistant Name *</label>
+          <input
+            type="text"
+            required
+            maxLength={40}
+            value={assistantName}
+            onChange={(e) => setAssistantName(e.target.value)}
+            placeholder="e.g. Priya from Royal Silk"
+            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-indigo-500"
+          />
+          <span className="text-[10px] text-slate-500 mt-1 block">
+            Shown to your shoppers as the name of your store's AI assistant.
+          </span>
+        </div>
+
+        <div>
           <label className="block text-slate-300 font-medium mb-1">AI Assistant Opening Greeting</label>
           <textarea
             rows={3}
@@ -171,6 +208,20 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack }) => {
           />
           <span className="text-[10px] text-slate-500 mt-1 block">
             This message is sent when a customer opens the shopping simulator or initiates a WhatsApp conversation.
+          </span>
+        </div>
+
+        <div>
+          <label className="block text-slate-300 font-medium mb-1">Suggested Questions</label>
+          <textarea
+            rows={5}
+            value={questionsText}
+            onChange={(e) => setQuestionsText(e.target.value)}
+            placeholder={'One question per line, e.g.\nShow me new arrivals\nDo you have size M available?'}
+            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-indigo-500 leading-relaxed"
+          />
+          <span className="text-[10px] text-slate-500 mt-1 block">
+            One per line (up to 8, 80 characters each). Shoppers see these as tap-to-ask chips under the chat.
           </span>
         </div>
 

@@ -37,6 +37,8 @@ interface ChatMessage {
 export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ openCartDrawer, onBack }) => {
   const { business, user } = useAuth();
   const { addItem, items: cartItems } = useCart();
+  // The store owner can rename the assistant and set its suggested questions (Settings page).
+  const assistantName = business?.assistant_name?.trim() || 'ShopMate AI';
 
   const [inputMessage, setInputMessage] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -48,7 +50,7 @@ export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ open
   useEffect(() => {
     const greetingText =
       business?.ai_greeting ||
-      `Hello! Welcome to ${business?.name || 'our retail store'}. I am your ShopMate AI shopping assistant. How may I assist your shopping today?`;
+      `Hello! Welcome to ${business?.name || 'our retail store'}. I am ${assistantName}, your shopping assistant. How may I assist your shopping today?`;
 
     setMessages([
       {
@@ -59,7 +61,7 @@ export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ open
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       },
     ]);
-  }, [business]);
+  }, [business, assistantName]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -164,7 +166,7 @@ export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ open
     ]);
   };
 
-  const quickPrompts = [
+  const defaultPrompts = [
     'Show me red kurtis below ₹1,500',
     'Do you have size M available?',
     'Show me Banarasi and Chanderi sarees',
@@ -172,6 +174,10 @@ export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ open
     'What categories do you have?',
     'Track order ORD-2026-1001',
   ];
+  const quickPrompts =
+    business?.suggested_questions && business.suggested_questions.length > 0
+      ? business.suggested_questions
+      : defaultPrompts;
 
   return (
     <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-4">
@@ -189,14 +195,14 @@ export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ open
           <div>
             <div className="flex items-center gap-2">
               <h1 className="font-bold text-base text-white">
-                {business?.name || 'KalaKriti Ethnic & Modern Wear'}
+                {assistantName}
               </h1>
               <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800">
                 AI Agent Active
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Direct connection to live SQLite inventory & order ledger
+              {business?.name ? `${business.name} · ` : ''}Live inventory & order ledger
             </p>
           </div>
         </div>
@@ -231,7 +237,7 @@ export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ open
                   <div className="flex items-center justify-between gap-2 pb-1 border-b border-slate-700/50 text-[10px] text-slate-400">
                     <span className="flex items-center gap-1 font-semibold text-emerald-400">
                       <Sparkles className="w-3 h-3" />
-                      ShopMate AI
+                      {assistantName}
                     </span>
                     <span className="font-mono bg-slate-900 px-1.5 py-0.5 rounded text-slate-300">
                       {msg.engine === 'gemini-3.8-flash' ? '⚡ Gemini 3.8 Flash' : '🤖 Retail DB Engine'}
@@ -347,7 +353,7 @@ export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ open
           {isLoading && (
             <div className="flex items-center gap-2 p-3 rounded-2xl bg-slate-800/80 border border-slate-700/60 max-w-xs text-xs text-slate-400">
               <Bot className="w-4 h-4 text-emerald-400 animate-pulse" />
-              <span>ShopMate AI is querying inventory database...</span>
+              <span>{assistantName} is checking the store inventory...</span>
             </div>
           )}
 

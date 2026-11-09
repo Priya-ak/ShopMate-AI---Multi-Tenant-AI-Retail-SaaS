@@ -194,3 +194,14 @@ CREATE TABLE IF NOT EXISTS integrations (
   FOREIGN KEY(business_id) REFERENCES businesses(id) ON DELETE CASCADE,
   UNIQUE(business_id, provider)
 );
+
+-- ---------------------------------------------------------------------------
+-- Additions (2026-11-09.1). The application applies these automatically at startup
+-- (see server/db.ts); they are listed here for reference only.
+-- ---------------------------------------------------------------------------
+-- businesses: assistant_name TEXT, suggested_questions TEXT (JSON array), is_demo INTEGER DEFAULT 0
+-- users: auth_provider TEXT DEFAULT 'password', google_id TEXT, avatar_url TEXT, is_demo INTEGER DEFAULT 0,
+--        last_login_at TEXT, last_seen_at TEXT, login_count INTEGER DEFAULT 0
+-- CREATE TABLE login_events (id, user_id, email, name, role, business_id, method, success, failure_reason,
+--                            ip, user_agent, created_at);   -- feeds the Super Admin portal
+-- CREATE TABLE app_meta (key, value);                         -- schema version marker

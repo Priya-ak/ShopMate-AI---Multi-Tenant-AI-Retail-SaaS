@@ -10,6 +10,8 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, pass: string) => Promise<User>;
   register: (data: any) => Promise<User>;
+  googleAuth: (params: Parameters<typeof api.googleAuth>[0]) => Promise<User>;
+  refreshBusiness: () => Promise<void>;
   logout: () => void;
   switchDemoRole: (role: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'SUPER_ADMIN' | 'BIZ_2') => Promise<User>;
   setCurrentBusinessId: (id: string) => void;
@@ -78,12 +80,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(res.user);
       setToken(res.token);
       localStorage.setItem('shopmate_token', res.token);
+      if (res.business) setBusiness(res.business);
       if (res.user.business_id) {
         setCurrentBusinessId(res.user.business_id);
       }
       return res.user;
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const googleAuth = async (params: Parameters<typeof api.googleAuth>[0]): Promise<User> => {
+    setIsLoading(true);
+    try {
+      const res = await api.googleAuth(params);
+      setUser(res.user);
+      setToken(res.token);
+      localStorage.setItem('shopmate_token', res.token);
+      if (res.business) setBusiness(res.business);
+      if (res.user.business_id) {
+        setCurrentBusinessId(res.user.business_id);
+      }
+      return res.user;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /** Reload the signed-in user's store (e.g. after editing assistant settings). */
+  const refreshBusiness = async () => {
+    try {
+      const fresh = await api.getBusinessMe();
+      if (fresh && (fresh as any).id) setBusiness(fresh);
+    } catch {
+      /* keep the current copy */
     }
   };
 
@@ -124,6 +154,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         login,
         register,
+        googleAuth,
+        refreshBusiness,
         logout,
         switchDemoRole,
         setCurrentBusinessId,

@@ -1,1 +1,48 @@
 @import "tailwindcss";
+
+/*
+ * Themed scrollbars - one consistent, slim dark style for every scrollable area in the app
+ * (page, chat streams, tables, modals, drawers, chip rows).
+ */
+:root {
+  color-scheme: dark;
+  --sb-track: transparent;
+  --sb-thumb: #334155; /* slate-700 */
+  --sb-thumb-hover: #6366f1; /* indigo-500 */
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sb-thumb) var(--sb-track);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: var(--sb-track);
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--sb-thumb);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:active {
+  background-color: var(--sb-thumb-hover);
+  background-clip: padding-box;
+}
+
+/* Horizontally scrolling chip rows keep their scroll, but hide the bar itself. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

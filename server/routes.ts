@@ -1,6 +1,22 @@
-import { Router, Request, Response, NextFunction } from 'express';
-import { db } from './db.js';
-import { hashPassword } from './seed.js';
+import { Request, Response } from 'express';
+import { asyncRouter } from './asyncRouter.js';
+import { db, newId } from './db.js';
+import { loadVariantsByProduct } from './dbHelpers.js';
+import {
+  authMiddleware,
+  optionalAuthMiddleware,
+  requireRole,
+  resolveBusinessId,
+  AuthUser,
+  DEMO_BUSINESS_ID,
+  cleanText,
+  hashPassword,
+  isValidEmail,
+} from './auth.js';
+import { authRouter } from './authRoutes.js';
+import { superAdminRouter } from './superadmin.js';
+import { appAssistantRouter } from './appAssistant.js';
+import { AccountError, sanitizeQuestions, serializeBusiness } from './accounts.js';
 import {
   runGeminiAgent,
   runDeterministicAgent,
@@ -8,428 +24,93 @@ import {
   toolGetRecommendations,
   toolCreateOrderSafe,
 } from './gemini.js';
-import crypto from 'node:crypto';
 
-export const apiRouter = Router();
+export { authMiddleware, optionalAuthMiddleware, resolveBusinessId };
+export type { AuthUser };
 
-// -------------------------------------------------------------
-// Authentication Helper & Middleware
-// -------------------------------------------------------------
-export interface AuthUser {
-  id: string;
-  email: string;
-  name: string;
-  role: 'SUPER_ADMIN' | 'BUSINESS_OWNER' | 'EMPLOYEE' | 'CUSTOMER';
-  business_id: string | null;
-  phone?: string;
-}
+export const apiRouter = asyncRouter();
 
-// In-memory session store (simple token map for MVP)
-const sessions = new Map<string, AuthUser>();
-
-export function createSessionToken(user: AuthUser): string {
-  const token = 'tok_' + crypto.randomBytes(32).toString('hex');
-  sessions.set(token, user);
-  return token;
-}
-
-export function authMiddleware(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
-  }
-
-  const token = authHeader.substring(7);
-  const user = sessions.get(token);
-  if (!user) {
-    return res.status(401).json({ error: 'Unauthorized: Session expired or invalid' });
-  }
-
-  (req as any).user = user;
-  next();
-}
-
-// Optional Auth (for public customer catalog / shopping)
-export function optionalAuthMiddleware(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.substring(7);
-    const user = sessions.get(token);
-    if (user) {
-      (req as any).user = user;
-    }
-  }
-  next();
-}
-
-// Multi-tenant business resolver helper
-export function resolveBusinessId(req: Request): string {
-  const user = (req as any).user as AuthUser | undefined;
-  if (user && user.business_id) {
-    return user.business_id;
-  }
-  const headerBiz = req.headers['x-business-id'] as string;
-  if (headerBiz) {
-    return headerBiz;
-  }
-  const firstBiz = db.prepare('SELECT id FROM businesses WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1').get() as { id: string } | undefined;
-  return firstBiz?.id || '';
-}
-
-// -------------------------------------------------------------
-// AUTH ENDPOINTS
-// -------------------------------------------------------------
-
-// POST /api/auth/register
-apiRouter.post('/auth/register', (req: Request, res: Response) => {
-  try {
-    const { email, password, name, businessName, businessCategory, phone } = req.body;
-
-    const normalizedEmail = (email || '').trim().toLowerCase();
-    const cleanPhone = (phone || '').trim().replace(/[\s\-\(\)]/g, '');
-
-    if (!normalizedEmail || !password || !name) {
-      return res.status(400).json({ error: 'Name, email address, and password are required.' });
-    }
-
-    if (!cleanPhone || cleanPhone.length < 8) {
-      return res.status(400).json({ error: 'A valid phone number (at least 8 digits) is required for account security.' });
-    }
-
-    // 1. Security Check: Email Uniqueness
-    const existingEmail = db.prepare('SELECT id FROM users WHERE LOWER(email) = LOWER(?)').get(normalizedEmail);
-    if (existingEmail) {
-      return res.status(400).json({ error: 'This email address is already registered. Please sign in or use another email.' });
-    }
-
-    // 2. Security Check: Phone Number Uniqueness
-    const allUsersWithPhone = db.prepare('SELECT id, phone FROM users WHERE phone IS NOT NULL').all() as any[];
-    const existingPhone = allUsersWithPhone.find((u) => {
-      if (!u.phone) return false;
-      return u.phone.trim().replace(/[\s\-\(\)]/g, '') === cleanPhone;
-    });
-
-    if (existingPhone) {
-      return res.status(400).json({ error: 'This phone number is already registered to another account. Each account must have a unique phone number.' });
-    }
-
-    let businessId: string | null = null;
-    if (businessName) {
-      businessId = 'biz_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-      const slug = businessName.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
-      db.prepare(`
-        INSERT INTO businesses (id, name, slug, category, phone, email)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).run(businessId, businessName, slug, businessCategory || 'Retail Store', phone.trim(), normalizedEmail);
-    }
-
-    const userId = 'usr_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-    const role = businessId ? 'BUSINESS_OWNER' : 'CUSTOMER';
-
-    db.prepare(`
-      INSERT INTO users (id, email, password_hash, name, role, business_id, phone)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(userId, normalizedEmail, hashPassword(password), name.trim(), role, businessId, phone.trim());
-
-    const user: AuthUser = {
-      id: userId,
-      email: normalizedEmail,
-      name: name.trim(),
-      role,
-      business_id: businessId,
-      phone: phone.trim(),
-    };
-
-    const token = createSessionToken(user);
-    res.status(201).json({ user, token });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/auth/demo-login - Instant Provisioning for One-Click Demo Personas
-apiRouter.post('/auth/demo-login', (req: Request, res: Response) => {
-  try {
-    const { persona } = req.body;
-    const requested = (persona || 'OWNER').toUpperCase();
-
-    const demoBizId = 'biz_demo_store_001';
-
-    // 1. Ensure Demo Business exists with realistic interactive data
-    let demoBiz = db.prepare('SELECT * FROM businesses WHERE id = ?').get(demoBizId) as any;
-    if (!demoBiz) {
-      db.prepare(`
-        INSERT INTO businesses (id, name, slug, category, phone, email, address, currency, ai_greeting, is_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-      `).run(
-        demoBizId,
-        'KalaKriti Ethnic & Modern Wear',
-        'kalakriti-demo',
-        'Clothing & Ethnic Fashion',
-        '+91 98765 43210',
-        'demo@kalakriti.in',
-        '108 Commercial Street, Bengaluru, Karnataka, 560001',
-        '₹',
-        'Namaste! Welcome to KalaKriti Ethnic & Modern Wear demo store. I am your ShopMate AI shopping assistant. How may I assist your shopping today?'
-      );
-      demoBiz = db.prepare('SELECT * FROM businesses WHERE id = ?').get(demoBizId);
-
-      const catKurti = 'cat_demo_kurtis';
-      const catSaree = 'cat_demo_sarees';
-      const catShirt = 'cat_demo_shirts';
-      db.prepare(`INSERT OR IGNORE INTO product_categories (id, business_id, name, slug, description) VALUES (?, ?, ?, ?, ?)`).run(catKurti, demoBizId, 'Kurtis & Kurta Sets', 'kurtis', 'Handcrafted cotton and festive designer kurtis');
-      db.prepare(`INSERT OR IGNORE INTO product_categories (id, business_id, name, slug, description) VALUES (?, ?, ?, ?, ?)`).run(catSaree, demoBizId, 'Sarees', 'sarees', 'Banarasi, Chanderi, and silk festive sarees');
-      db.prepare(`INSERT OR IGNORE INTO product_categories (id, business_id, name, slug, description) VALUES (?, ?, ?, ?, ?)`).run(catShirt, demoBizId, 'Shirts & Tops', 'shirts', 'Breathable linen and casual office shirts');
-
-      const demoProducts = [
-        { id: 'prd_d1', cat: catKurti, name: 'Anarkali Pure Cotton Festive Kurti', sku: 'KK-KRT-101', price: 1399, col: 'Red', sizes: ['S', 'M', 'L', 'XL'], img: 'https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=600&auto=format&fit=crop&q=80' },
-        { id: 'prd_d2', cat: catKurti, name: 'Floral Embroidered Georgette Kurta Set', sku: 'KK-KRT-102', price: 1899, col: 'Pink', sizes: ['M', 'L', 'XL'], img: 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=600&auto=format&fit=crop&q=80' },
-        { id: 'prd_d3', cat: catSaree, name: 'Chanderi Zari Border Saree', sku: 'KK-SAR-201', price: 2199, col: 'Royal Blue', sizes: ['Free Size'], img: 'https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=600&auto=format&fit=crop&q=80' },
-        { id: 'prd_d4', cat: catShirt, name: 'Pure Linen Mandarin Collar Shirt', sku: 'KK-SHT-301', price: 1249, col: 'White', sizes: ['M', 'L', 'XL'], img: 'https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?w=600&auto=format&fit=crop&q=80' },
-      ];
-
-      for (const p of demoProducts) {
-        db.prepare(`
-          INSERT OR IGNORE INTO products (id, business_id, category_id, name, sku, regular_price, discount_price, colour, sizes, images, is_archived)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-        `).run(p.id, demoBizId, p.cat, p.name, p.sku, p.price + 300, p.price, p.col, JSON.stringify(p.sizes), JSON.stringify([p.img]));
-
-        for (const sz of p.sizes) {
-          db.prepare(`
-            INSERT OR IGNORE INTO product_variants (id, product_id, business_id, sku, size, colour, price, discount_price, stock_quantity)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 15)
-          `).run(`${p.id}_${sz}`, p.id, demoBizId, `${p.sku}-${sz}`, sz, p.col, p.price + 300, p.price);
-        }
-      }
-
-      const custId = 'cust_demo_01';
-      db.prepare(`
-        INSERT OR IGNORE INTO customers (id, business_id, name, phone, email, address, city)
-        VALUES (?, ?, 'Ananya Sen', '+91 98765 11111', 'ananya@example.com', 'Flat 402, Green Acres Apt, Indiranagar', 'Bengaluru')
-      `).run(custId, demoBizId);
-
-      const orderId = 'ord_demo_01';
-      db.prepare(`
-        INSERT OR IGNORE INTO orders (id, business_id, customer_id, order_number, subtotal, discount, tax, total_amount, delivery_address, payment_method, payment_status, order_status)
-        VALUES (?, ?, ?, 'ORD-2026-DEMO', 1399, 0, 0, 1399, 'Indiranagar, Bengaluru', 'Cash on Delivery', 'Paid', 'Confirmed')
-      `).run(orderId, demoBizId, custId);
-
-      db.prepare(`
-        INSERT OR IGNORE INTO order_items (id, order_id, product_id, variant_id, product_name, variant_details, quantity, unit_price, total_price)
-        VALUES ('item_demo_01', ?, 'prd_d1', 'prd_d1_M', 'Anarkali Pure Cotton Festive Kurti', 'Size: M | Colour: Red', 1, 1399, 1399)
-      `).run(orderId);
-    }
-
-    // 2. Persona Configuration Map
-    let demoUserId = 'usr_owner_demo';
-    let demoEmail = 'owner@shopmate.com';
-    let demoPass = 'admin123';
-    let demoName = 'Rajesh Patel (Store Owner)';
-    let demoRole: AuthUser['role'] = 'BUSINESS_OWNER';
-    let demoUserBizId: string | null = demoBizId;
-    let demoPhone = '+91 98765 43210';
-
-    if (requested === 'EMPLOYEE') {
-      demoUserId = 'usr_emp_demo';
-      demoEmail = 'priya@shopmate.com';
-      demoPass = 'employee123';
-      demoName = 'Priya Nair (Staff Executive)';
-      demoRole = 'EMPLOYEE';
-      demoUserBizId = demoBizId;
-      demoPhone = '+91 98765 43211';
-    } else if (requested === 'CUSTOMER') {
-      demoUserId = 'usr_cust_demo';
-      demoEmail = 'ananya@example.com';
-      demoPass = 'customer123';
-      demoName = 'Ananya Sen (Demo Customer)';
-      demoRole = 'CUSTOMER';
-      demoUserBizId = demoBizId;
-      demoPhone = '+91 98765 11111';
-    } else if (requested === 'SUPER_ADMIN') {
-      demoUserId = 'usr_admin_demo';
-      demoEmail = 'superadmin@shopmate.com';
-      demoPass = 'super123';
-      demoName = 'Aarav Sharma (Platform Admin)';
-      demoRole = 'SUPER_ADMIN';
-      demoUserBizId = null;
-      demoPhone = '+91 99999 00000';
-    }
-
-    // Ensure the user account exists
-    let userRow = db.prepare('SELECT * FROM users WHERE email = ?').get(demoEmail) as any;
-    if (!userRow) {
-      db.prepare(`
-        INSERT INTO users (id, email, password_hash, name, role, business_id, phone)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(demoUserId, demoEmail, hashPassword(demoPass), demoName, demoRole, demoUserBizId, demoPhone);
-      userRow = db.prepare('SELECT * FROM users WHERE email = ?').get(demoEmail);
-    }
-
-    const user: AuthUser = {
-      id: userRow.id,
-      email: userRow.email,
-      name: userRow.name,
-      role: userRow.role,
-      business_id: userRow.business_id,
-      phone: userRow.phone,
-    };
-
-    const token = createSessionToken(user);
-    res.json({
-      user,
-      token,
-      businessName: demoUserBizId ? 'KalaKriti Ethnic & Modern Wear' : undefined,
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/auth/login
-apiRouter.post('/auth/login', (req: Request, res: Response) => {
-  try {
-    const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ error: 'Email and password are required' });
-    }
-
-    const hash = hashPassword(password);
-    const userRow = db.prepare(`
-      SELECT u.id, u.email, u.name, u.role, u.business_id, u.phone, b.name as business_name
-      FROM users u
-      LEFT JOIN businesses b ON u.business_id = b.id
-      WHERE u.email = ? AND u.password_hash = ?
-    `).get(email, hash) as any;
-
-    if (!userRow) {
-      return res.status(401).json({ error: 'Invalid email or password' });
-    }
-
-    const user: AuthUser = {
-      id: userRow.id,
-      email: userRow.email,
-      name: userRow.name,
-      role: userRow.role,
-      business_id: userRow.business_id,
-      phone: userRow.phone,
-    };
-
-    const token = createSessionToken(user);
-    res.json({ user, token, businessName: userRow.business_name });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/auth/logout
-apiRouter.post('/auth/logout', authMiddleware, (req: Request, res: Response) => {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    sessions.delete(authHeader.substring(7));
-  }
-  res.json({ message: 'Logged out successfully' });
-});
-
-// GET /api/auth/me
-apiRouter.get('/auth/me', authMiddleware, (req: Request, res: Response) => {
-  const user = (req as any).user as AuthUser;
-  let business = null;
-  if (user.business_id) {
-    business = db.prepare('SELECT * FROM businesses WHERE id = ?').get(user.business_id);
-  }
-  res.json({ user, business });
-});
-
-// POST /api/auth/forgot-password
-apiRouter.post('/auth/forgot-password', (req: Request, res: Response) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ error: 'Email is required' });
-
-  const user = db.prepare('SELECT id FROM users WHERE email = ?').get(email) as any;
-  if (!user) {
-    // Avoid email enumeration in production, but confirm flow
-    return res.json({ message: 'If that email exists, password reset instructions have been created.' });
-  }
-
-  const resetToken = 'rst_' + crypto.randomBytes(24).toString('hex');
-  const expiresAt = new Date(Date.now() + 3600000).toISOString(); // 1 hour
-
-  db.prepare(`
-    INSERT INTO password_reset_tokens (id, user_id, token, expires_at)
-    VALUES (?, ?, ?, ?)
-  `).run('tok_' + Date.now(), user.id, resetToken, expiresAt);
-
-  res.json({
-    message: 'Password reset token generated successfully.',
-    resetToken, // for testing convenience
-  });
-});
-
-// POST /api/auth/reset-password
-apiRouter.post('/auth/reset-password', (req: Request, res: Response) => {
-  const { token, newPassword } = req.body;
-  if (!token || !newPassword) return res.status(400).json({ error: 'Token and newPassword are required' });
-
-  const resetRecord = db.prepare(`
-    SELECT * FROM password_reset_tokens WHERE token = ?
-  `).get(token) as any;
-
-  if (!resetRecord || new Date(resetRecord.expires_at) < new Date()) {
-    return res.status(400).json({ error: 'Invalid or expired password reset token' });
-  }
-
-  db.prepare(`
-    UPDATE users SET password_hash = ? WHERE id = ?
-  `).run(hashPassword(newPassword), resetRecord.user_id);
-
-  db.prepare(`DELETE FROM password_reset_tokens WHERE id = ?`).run(resetRecord.id);
-
-  res.json({ message: 'Password has been updated successfully.' });
-});
+apiRouter.use(authRouter);
+apiRouter.use('/superadmin', superAdminRouter);
+apiRouter.use(appAssistantRouter);
 
 // -------------------------------------------------------------
 // BUSINESSES
 // -------------------------------------------------------------
-apiRouter.get('/businesses/me', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const biz = db.prepare('SELECT * FROM businesses WHERE id = ?').get(bizId);
+apiRouter.get('/businesses/me', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const biz = await db.prepare('SELECT * FROM businesses WHERE id = ?').get(bizId);
   if (!biz) return res.status(404).json({ error: 'Business not found' });
-  res.json(biz);
+  res.json(serializeBusiness(biz));
 });
 
-apiRouter.put('/businesses/me', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const { name, phone, email, address, currency, ai_greeting } = req.body;
-  db.prepare(`
-    UPDATE businesses
-    SET name = COALESCE(?, name),
-        phone = COALESCE(?, phone),
-        email = COALESCE(?, email),
-        address = COALESCE(?, address),
-        currency = COALESCE(?, currency),
-        ai_greeting = COALESCE(?, ai_greeting),
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(name, phone, email, address, currency, ai_greeting, bizId);
+// Owner-only: store profile + the store's own AI chatbot (name, greeting, suggested questions).
+apiRouter.put('/businesses/me', authMiddleware, requireRole('BUSINESS_OWNER'), async (req: Request, res: Response) => {
+  try {
+    const bizId = await resolveBusinessId(req);
+    const body = req.body || {};
 
-  const updated = db.prepare('SELECT * FROM businesses WHERE id = ?').get(bizId);
-  res.json(updated);
+    const name = body.name !== undefined ? cleanText(body.name, 80) : null;
+    if (name !== null && name.length < 2) return res.status(400).json({ error: 'Business name is required (at least 2 characters).' });
+    const email = body.email !== undefined ? cleanText(body.email, 254) : null;
+    if (email && !isValidEmail(email)) return res.status(400).json({ error: 'Please enter a valid support email.' });
+
+    let assistantName: string | null = null;
+    if (body.assistant_name !== undefined) {
+      assistantName = cleanText(body.assistant_name, 40);
+      if (!assistantName) return res.status(400).json({ error: 'The assistant needs a name.' });
+    }
+    const greeting = body.ai_greeting !== undefined ? cleanText(body.ai_greeting, 500) : null;
+    const questions = body.suggested_questions !== undefined ? JSON.stringify(sanitizeQuestions(body.suggested_questions)) : null;
+
+    await db.prepare(`
+      UPDATE businesses
+      SET name = COALESCE(?, name),
+          phone = COALESCE(?, phone),
+          email = COALESCE(?, email),
+          address = COALESCE(?, address),
+          currency = COALESCE(?, currency),
+          ai_greeting = COALESCE(?, ai_greeting),
+          assistant_name = COALESCE(?, assistant_name),
+          suggested_questions = COALESCE(?, suggested_questions),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name,
+      body.phone !== undefined ? cleanText(body.phone, 30) : null,
+      email,
+      body.address !== undefined ? cleanText(body.address, 250) : null,
+      body.currency !== undefined ? cleanText(body.currency, 6) || null : null,
+      greeting,
+      assistantName,
+      questions,
+      bizId
+    );
+
+    const updated = await db.prepare('SELECT * FROM businesses WHERE id = ?').get(bizId);
+    res.json(serializeBusiness(updated));
+  } catch (err: any) {
+    if (err instanceof AccountError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
 });
 
 // Platform Super Admin - List all businesses
-apiRouter.get('/businesses', authMiddleware, (req: Request, res: Response) => {
+apiRouter.get('/businesses', authMiddleware, async (req: Request, res: Response) => {
   const user = (req as any).user as AuthUser;
   if (user.role !== 'SUPER_ADMIN') {
     return res.status(403).json({ error: 'Forbidden: Super Admin only' });
   }
 
-  const businesses = db.prepare(`
+  // The one-click "Platform Admin" demo persona is public, so it only ever sees the sandbox tenant.
+  const businesses = await db.prepare(`
     SELECT b.*,
       (SELECT COUNT(*) FROM products WHERE business_id = b.id) as product_count,
       (SELECT COUNT(*) FROM orders WHERE business_id = b.id) as order_count,
       (SELECT COUNT(*) FROM users WHERE business_id = b.id) as user_count
     FROM businesses b
-  `).all();
+    ${user.is_demo ? 'WHERE b.id = ?' : ''}
+  `).all(...(user.is_demo ? [DEMO_BUSINESS_ID] : []));
 
   res.json(businesses);
 });
@@ -438,9 +119,9 @@ apiRouter.get('/businesses', authMiddleware, (req: Request, res: Response) => {
 // PRODUCTS
 // -------------------------------------------------------------
 // GET /api/products (supports search, category, colour, size, min/max price, sorting, pagination)
-apiRouter.get('/products', optionalAuthMiddleware, (req: Request, res: Response) => {
+apiRouter.get('/products', optionalAuthMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const {
       search,
       category,
@@ -493,11 +174,12 @@ apiRouter.get('/products', optionalAuthMiddleware, (req: Request, res: Response)
     sql += ` LIMIT ? OFFSET ?`;
     params.push(parseInt(limit), offset);
 
-    const products = db.prepare(sql).all(...params) as any[];
+    const products = await db.prepare(sql).all(...params) as any[];
 
     // Hydrate variants and parsed fields
+    const variantsByProduct = await loadVariantsByProduct(bizId, products.map((p) => p.id));
     const enriched = products.map((p) => {
-      const variants = db.prepare(`SELECT * FROM product_variants WHERE product_id = ? AND business_id = ?`).all(p.id, bizId) as any[];
+      const variants = variantsByProduct.get(p.id) || [];
       let sizes = [];
       let images = [];
       try { sizes = JSON.parse(p.sizes || '[]'); } catch {}
@@ -514,7 +196,7 @@ apiRouter.get('/products', optionalAuthMiddleware, (req: Request, res: Response)
       };
     });
 
-    const totalCount = (db.prepare(`SELECT COUNT(*) as count FROM products WHERE business_id = ? AND is_archived = 0`).get(bizId) as any).count;
+    const totalCount = (await db.prepare(`SELECT COUNT(*) as count FROM products WHERE business_id = ? AND is_archived = 0`).get(bizId) as any).count;
 
     res.json({
       products: enriched,
@@ -531,9 +213,9 @@ apiRouter.get('/products', optionalAuthMiddleware, (req: Request, res: Response)
 });
 
 // GET /api/products/:id
-apiRouter.get('/products/:id', optionalAuthMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const p = db.prepare(`
+apiRouter.get('/products/:id', optionalAuthMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const p = await db.prepare(`
     SELECT p.*, c.name as category_name
     FROM products p
     LEFT JOIN product_categories c ON p.category_id = c.id
@@ -542,7 +224,7 @@ apiRouter.get('/products/:id', optionalAuthMiddleware, (req: Request, res: Respo
 
   if (!p) return res.status(404).json({ error: 'Product not found' });
 
-  const variants = db.prepare(`SELECT * FROM product_variants WHERE product_id = ? AND business_id = ?`).all(p.id, bizId);
+  const variants = await db.prepare(`SELECT * FROM product_variants WHERE product_id = ? AND business_id = ?`).all(p.id, bizId);
   let sizes = [];
   let images = [];
   try { sizes = JSON.parse(p.sizes || '[]'); } catch {}
@@ -557,9 +239,9 @@ apiRouter.get('/products/:id', optionalAuthMiddleware, (req: Request, res: Respo
 });
 
 // POST /api/products (Create Product)
-apiRouter.post('/products', authMiddleware, (req: Request, res: Response) => {
+apiRouter.post('/products', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const {
       name,
       sku,
@@ -580,16 +262,15 @@ apiRouter.post('/products', authMiddleware, (req: Request, res: Response) => {
     }
 
     // Check duplicate SKU in this business
-    const existingSku = db.prepare(`SELECT id FROM products WHERE business_id = ? AND sku = ?`).get(bizId, sku);
+    const existingSku = await db.prepare(`SELECT id FROM products WHERE business_id = ? AND sku = ?`).get(bizId, sku);
     if (existingSku) {
       return res.status(400).json({ error: `SKU "${sku}" already exists in your inventory.` });
     }
 
     const prodId = 'prd_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
 
-    db.exec('BEGIN TRANSACTION;');
-    try {
-      db.prepare(`
+    await db.transaction(async () => {
+      await db.prepare(`
         INSERT INTO products (
           id, business_id, category_id, name, sku, description, brand,
           regular_price, discount_price, colour, sizes, images, min_stock_threshold
@@ -624,7 +305,7 @@ apiRouter.post('/products', authMiddleware, (req: Request, res: Response) => {
         const varSku = `${sku}-${(v.size || 'STD').replace(/\s+/g, '')}-${i + 1}`;
         const stockQty = Number(v.stock || v.stock_quantity || 0);
 
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO product_variants (
             id, product_id, business_id, sku, size, colour, price, discount_price, stock_quantity
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -642,7 +323,7 @@ apiRouter.post('/products', authMiddleware, (req: Request, res: Response) => {
 
         // Record initial stock in ledger
         if (stockQty > 0) {
-          db.prepare(`
+          await db.prepare(`
             INSERT INTO inventory_movements (
               id, business_id, product_id, variant_id, change_qty, balance_after, movement_type, notes
             ) VALUES (?, ?, ?, ?, ?, ?, 'PURCHASE', 'Product creation stock setup')
@@ -657,21 +338,17 @@ apiRouter.post('/products', authMiddleware, (req: Request, res: Response) => {
         }
       }
 
-      db.exec('COMMIT;');
-      res.status(201).json({ id: prodId, message: 'Product created successfully' });
-    } catch (inner: any) {
-      db.exec('ROLLBACK;');
-      throw inner;
-    }
+    });
+    res.status(201).json({ id: prodId, message: 'Product created successfully' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // PUT /api/products/:id
-apiRouter.put('/products/:id', authMiddleware, (req: Request, res: Response) => {
+apiRouter.put('/products/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const {
       name,
       category_id,
@@ -686,7 +363,7 @@ apiRouter.put('/products/:id', authMiddleware, (req: Request, res: Response) => 
       is_archived,
     } = req.body;
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE products
       SET name = COALESCE(?, name),
           category_id = COALESCE(?, category_id),
@@ -724,11 +401,11 @@ apiRouter.put('/products/:id', authMiddleware, (req: Request, res: Response) => 
 });
 
 // DELETE /api/products/:id
-apiRouter.delete('/products/:id', authMiddleware, (req: Request, res: Response) => {
+apiRouter.delete('/products/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     // Soft delete / archive to protect historical order items foreign keys
-    db.prepare(`
+    await db.prepare(`
       UPDATE products SET is_archived = 1, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND business_id = ?
     `).run(req.params.id, bizId);
@@ -740,26 +417,25 @@ apiRouter.delete('/products/:id', authMiddleware, (req: Request, res: Response) 
 });
 
 // Bulk CSV Import
-apiRouter.post('/products/bulk-csv', authMiddleware, (req: Request, res: Response) => {
+apiRouter.post('/products/bulk-csv', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const { items } = req.body; // Array of product objects from CSV
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'Items array is required for bulk CSV import' });
     }
 
     let importedCount = 0;
-    db.exec('BEGIN TRANSACTION;');
-    try {
+    await db.transaction(async () => {
       for (const item of items) {
         if (!item.name || !item.sku || !item.regular_price) continue;
 
         // Skip if SKU already exists
-        const exists = db.prepare('SELECT id FROM products WHERE business_id = ? AND sku = ?').get(bizId, item.sku);
+        const exists = await db.prepare('SELECT id FROM products WHERE business_id = ? AND sku = ?').get(bizId, item.sku);
         if (exists) continue;
 
         const prodId = 'prd_bulk_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO products (
             id, business_id, name, sku, description, brand, regular_price,
             discount_price, colour, sizes, images, min_stock_threshold
@@ -782,7 +458,7 @@ apiRouter.post('/products/bulk-csv', authMiddleware, (req: Request, res: Respons
         // Add a default variant
         const varId = `var_${prodId}_1`;
         const initialStock = Number(item.stock || 10);
-        db.prepare(`
+        await db.prepare(`
           INSERT INTO product_variants (
             id, product_id, business_id, sku, size, colour, price, stock_quantity
           ) VALUES (?, ?, ?, ?, 'Standard', ?, ?, ?)
@@ -798,21 +474,17 @@ apiRouter.post('/products/bulk-csv', authMiddleware, (req: Request, res: Respons
 
         importedCount++;
       }
-      db.exec('COMMIT;');
-      res.json({ message: `Successfully imported ${importedCount} products.`, importedCount });
-    } catch (inner: any) {
-      db.exec('ROLLBACK;');
-      throw inner;
-    }
+    });
+    res.json({ message: `Successfully imported ${importedCount} products.`, importedCount });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // CSV Export
-apiRouter.get('/products/export-csv', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const products = db.prepare(`
+apiRouter.get('/products/export-csv', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const products = await db.prepare(`
     SELECT p.name, p.sku, c.name as category, p.brand, p.regular_price, p.discount_price,
            p.colour, (SELECT SUM(stock_quantity) FROM product_variants WHERE product_id = p.id) as total_stock
     FROM products p
@@ -826,9 +498,9 @@ apiRouter.get('/products/export-csv', authMiddleware, (req: Request, res: Respon
 // -------------------------------------------------------------
 // CATEGORIES
 // -------------------------------------------------------------
-apiRouter.get('/categories', optionalAuthMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const cats = db.prepare(`
+apiRouter.get('/categories', optionalAuthMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const cats = await db.prepare(`
     SELECT c.*, COUNT(p.id) as product_count
     FROM product_categories c
     LEFT JOIN products p ON c.id = p.category_id AND p.is_archived = 0
@@ -839,16 +511,16 @@ apiRouter.get('/categories', optionalAuthMiddleware, (req: Request, res: Respons
   res.json(cats);
 });
 
-apiRouter.post('/categories', authMiddleware, (req: Request, res: Response) => {
+apiRouter.post('/categories', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const { name, description, image_url } = req.body;
     if (!name) return res.status(400).json({ error: 'Category name is required' });
 
     const slug = name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-');
     const id = 'cat_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5);
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO product_categories (id, business_id, name, slug, description, image_url)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(id, bizId, name, slug, description || '', image_url || '');
@@ -859,10 +531,10 @@ apiRouter.post('/categories', authMiddleware, (req: Request, res: Response) => {
   }
 });
 
-apiRouter.delete('/categories/:id', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
+apiRouter.delete('/categories/:id', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
   // Check if products exist in category
-  const prodCount = (db.prepare(`
+  const prodCount = (await db.prepare(`
     SELECT COUNT(*) as count FROM products WHERE category_id = ? AND business_id = ? AND is_archived = 0
   `).get(req.params.id, bizId) as any).count;
 
@@ -872,39 +544,39 @@ apiRouter.delete('/categories/:id', authMiddleware, (req: Request, res: Response
     });
   }
 
-  db.prepare('DELETE FROM product_categories WHERE id = ? AND business_id = ?').run(req.params.id, bizId);
+  await db.prepare('DELETE FROM product_categories WHERE id = ? AND business_id = ?').run(req.params.id, bizId);
   res.json({ message: 'Category deleted successfully' });
 });
 
 // -------------------------------------------------------------
 // VARIANTS & INVENTORY
 // -------------------------------------------------------------
-apiRouter.get('/products/:id/variants', optionalAuthMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const variants = db.prepare(`
+apiRouter.get('/products/:id/variants', optionalAuthMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const variants = await db.prepare(`
     SELECT * FROM product_variants WHERE product_id = ? AND business_id = ?
   `).all(req.params.id, bizId);
   res.json(variants);
 });
 
-apiRouter.post('/products/:id/variants', authMiddleware, (req: Request, res: Response) => {
+apiRouter.post('/products/:id/variants', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const { size, colour, price, discount_price, stock_quantity = 0 } = req.body;
 
-    const prod = db.prepare('SELECT sku FROM products WHERE id = ? AND business_id = ?').get(req.params.id, bizId) as any;
+    const prod = await db.prepare('SELECT sku FROM products WHERE id = ? AND business_id = ?').get(req.params.id, bizId) as any;
     if (!prod) return res.status(404).json({ error: 'Product not found' });
 
     const varId = `var_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`;
     const varSku = `${prod.sku}-${(size || 'STD').replace(/\s+/g, '')}-${(colour || 'STD').substring(0, 3).toUpperCase()}-${Date.now().toString().slice(-4)}`;
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO product_variants (id, product_id, business_id, sku, size, colour, price, discount_price, stock_quantity)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(varId, req.params.id, bizId, varSku, size, colour, Number(price), discount_price ? Number(discount_price) : null, Number(stock_quantity));
 
     if (stock_quantity > 0) {
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO inventory_movements (id, business_id, product_id, variant_id, change_qty, balance_after, movement_type, notes)
         VALUES (?, ?, ?, ?, ?, ?, 'PURCHASE', 'New variant stock added')
       `).run(`mov_${varId}`, bizId, req.params.id, varId, Number(stock_quantity), Number(stock_quantity));
@@ -917,9 +589,9 @@ apiRouter.post('/products/:id/variants', authMiddleware, (req: Request, res: Res
 });
 
 // GET /api/inventory
-apiRouter.get('/inventory', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const items = db.prepare(`
+apiRouter.get('/inventory', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const items = await db.prepare(`
     SELECT v.*, p.name as product_name, p.min_stock_threshold, p.images as product_images,
            c.name as category_name
     FROM product_variants v
@@ -942,12 +614,12 @@ apiRouter.get('/inventory', authMiddleware, (req: Request, res: Response) => {
 });
 
 // PUT /api/inventory/:id (Update Variant Stock with Ledger Movement)
-apiRouter.put('/inventory/:id', authMiddleware, (req: Request, res: Response) => {
+apiRouter.put('/inventory/:id', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const { adjustment_qty, new_stock_qty, movement_type = 'ADJUSTMENT', notes } = req.body;
 
-    const variant = db.prepare(`
+    const variant = await db.prepare(`
       SELECT * FROM product_variants WHERE id = ? AND business_id = ?
     `).get(req.params.id, bizId) as any;
 
@@ -968,16 +640,15 @@ apiRouter.put('/inventory/:id', authMiddleware, (req: Request, res: Response) =>
       return res.status(400).json({ error: 'Stock cannot be negative' });
     }
 
-    db.exec('BEGIN TRANSACTION;');
-    try {
-      db.prepare(`
+    await db.transaction(async () => {
+      await db.prepare(`
         UPDATE product_variants
         SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP
         WHERE id = ? AND business_id = ?
       `).run(finalStock, req.params.id, bizId);
 
       const movId = `mov_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-      db.prepare(`
+      await db.prepare(`
         INSERT INTO inventory_movements (
           id, business_id, product_id, variant_id, change_qty, balance_after, movement_type, notes
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -992,21 +663,17 @@ apiRouter.put('/inventory/:id', authMiddleware, (req: Request, res: Response) =>
         notes || 'Stock quantity updated by owner'
       );
 
-      db.exec('COMMIT;');
-      res.json({ message: 'Stock updated', variant_id: variant.id, new_stock: finalStock });
-    } catch (inner: any) {
-      db.exec('ROLLBACK;');
-      throw inner;
-    }
+    });
+    res.json({ message: 'Stock updated', variant_id: variant.id, new_stock: finalStock });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // GET /api/inventory/movements
-apiRouter.get('/inventory/movements', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const movements = db.prepare(`
+apiRouter.get('/inventory/movements', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const movements = await db.prepare(`
     SELECT m.*, p.name as product_name, v.size, v.colour, v.sku as variant_sku
     FROM inventory_movements m
     JOIN products p ON m.product_id = p.id
@@ -1021,9 +688,9 @@ apiRouter.get('/inventory/movements', authMiddleware, (req: Request, res: Respon
 // -------------------------------------------------------------
 // CUSTOMERS
 // -------------------------------------------------------------
-apiRouter.get('/customers', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const customers = db.prepare(`
+apiRouter.get('/customers', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const customers = await db.prepare(`
     SELECT c.*,
       COUNT(o.id) as total_orders,
       COALESCE(SUM(o.total_amount), 0) as total_spent
@@ -1037,23 +704,23 @@ apiRouter.get('/customers', authMiddleware, (req: Request, res: Response) => {
   res.json(customers);
 });
 
-apiRouter.get('/customers/:id', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const customer = db.prepare('SELECT * FROM customers WHERE id = ? AND business_id = ?').get(req.params.id, bizId);
+apiRouter.get('/customers/:id', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const customer = await db.prepare('SELECT * FROM customers WHERE id = ? AND business_id = ?').get(req.params.id, bizId);
   if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
-  const orders = db.prepare('SELECT * FROM orders WHERE customer_id = ? AND business_id = ? ORDER BY created_at DESC').all(req.params.id, bizId);
+  const orders = await db.prepare('SELECT * FROM orders WHERE customer_id = ? AND business_id = ? ORDER BY created_at DESC').all(req.params.id, bizId);
   res.json({ customer, orders });
 });
 
-apiRouter.post('/customers', authMiddleware, (req: Request, res: Response) => {
+apiRouter.post('/customers', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const { name, phone, email, address, city, state, postal_code } = req.body;
     if (!name || !phone) return res.status(400).json({ error: 'Name and phone are required' });
 
-    const id = 'cust_' + Date.now();
-    db.prepare(`
+    const id = newId('cust');
+    await db.prepare(`
       INSERT INTO customers (id, business_id, name, phone, email, address, city, state, postal_code)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, bizId, name, phone, email || null, address || null, city || null, state || null, postal_code || null);
@@ -1068,8 +735,8 @@ apiRouter.post('/customers', authMiddleware, (req: Request, res: Response) => {
 // ORDERS
 // -------------------------------------------------------------
 // GET /api/orders
-apiRouter.get('/orders', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
+apiRouter.get('/orders', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
   const { status, search } = req.query as any;
 
   let sql = `
@@ -1091,11 +758,21 @@ apiRouter.get('/orders', authMiddleware, (req: Request, res: Response) => {
   }
 
   sql += ` ORDER BY o.created_at DESC`;
-  const orders = db.prepare(sql).all(...params) as any[];
+  const orders = await db.prepare(sql).all(...params) as any[];
 
   // Attach items count
+  const itemsByOrder = new Map<string, any[]>();
+  if (orders.length > 0) {
+    const marks = orders.map(() => '?').join(',');
+    const allItems = await db.prepare(`SELECT * FROM order_items WHERE order_id IN (${marks})`).all(...orders.map((o) => o.id)) as any[];
+    for (const it of allItems) {
+      const list = itemsByOrder.get(it.order_id) || [];
+      list.push(it);
+      itemsByOrder.set(it.order_id, list);
+    }
+  }
   const enriched = orders.map((o) => {
-    const items = db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).all(o.id);
+    const items = itemsByOrder.get(o.id) || [];
     return {
       ...o,
       items,
@@ -1107,9 +784,9 @@ apiRouter.get('/orders', authMiddleware, (req: Request, res: Response) => {
 });
 
 // GET /api/orders/:id
-apiRouter.get('/orders/:id', optionalAuthMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const order = db.prepare(`
+apiRouter.get('/orders/:id', optionalAuthMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const order = await db.prepare(`
     SELECT o.*, c.name as customer_name, c.phone as customer_phone, c.email as customer_email,
            b.name as business_name, b.phone as business_phone, b.address as business_address
     FROM orders o
@@ -1120,21 +797,21 @@ apiRouter.get('/orders/:id', optionalAuthMiddleware, (req: Request, res: Respons
 
   if (!order) return res.status(404).json({ error: 'Order not found' });
 
-  const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
+  const items = await db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
   res.json({ ...order, items });
 });
 
 // POST /api/orders (Safe transaction creation)
-apiRouter.post('/orders', optionalAuthMiddleware, (req: Request, res: Response) => {
+apiRouter.post('/orders', optionalAuthMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const { customerName, customerPhone, customerEmail, deliveryAddress, paymentMethod, items, notes } = req.body;
 
     if (!customerName || !customerPhone || !deliveryAddress || !items || items.length === 0) {
       return res.status(400).json({ error: 'Customer name, phone, address and at least one item are required' });
     }
 
-    const result = toolCreateOrderSafe({
+    const result = await toolCreateOrderSafe({
       businessId: bizId,
       customerName,
       customerPhone,
@@ -1151,10 +828,58 @@ apiRouter.post('/orders', optionalAuthMiddleware, (req: Request, res: Response) 
   }
 });
 
+/**
+ * Cancels an order and returns its stock to the ledger atomically.
+ * The status flip is conditional, so two concurrent cancellations can never restock twice.
+ */
+async function cancelOrderAndRestock(order: any, bizId: string, note: string, paymentStatus?: string | null) {
+  await db.transaction(async () => {
+    const flipped = await db.prepare(`
+      UPDATE orders
+      SET order_status = 'Cancelled',
+          payment_status = COALESCE(?, payment_status),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND business_id = ? AND order_status != 'Cancelled'
+    `).run(paymentStatus ?? null, order.id, bizId);
+    if (flipped.changes === 0) throw new AccountError(400, 'Order is already cancelled');
+
+    const items = await db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).all(order.id) as any[];
+    for (const item of items) {
+      const variant = await db.prepare(
+        `SELECT * FROM product_variants WHERE id = ? AND business_id = ? FOR UPDATE`
+      ).get(item.variant_id, bizId) as any;
+      if (!variant) continue;
+
+      const restoredStock = variant.stock_quantity + item.quantity;
+      await db.prepare(`
+        UPDATE product_variants
+        SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND business_id = ?
+      `).run(restoredStock, variant.id, bizId);
+
+      await db.prepare(`
+        INSERT INTO inventory_movements (
+          id, business_id, product_id, variant_id, change_qty, balance_after,
+          movement_type, reference_order_id, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, 'CANCELLATION', ?, ?)
+      `).run(
+        newId('mov_cancel'),
+        bizId,
+        variant.product_id,
+        variant.id,
+        item.quantity,
+        restoredStock,
+        order.order_number,
+        note
+      );
+    }
+  });
+}
+
 // PUT /api/orders/:id/status
-apiRouter.put('/orders/:id/status', authMiddleware, (req: Request, res: Response) => {
+apiRouter.put('/orders/:id/status', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const { status, payment_status } = req.body;
 
     const validStatuses = ['Pending', 'Confirmed', 'Processing', 'Packed', 'Shipped', 'Delivered', 'Cancelled'];
@@ -1162,131 +887,45 @@ apiRouter.put('/orders/:id/status', authMiddleware, (req: Request, res: Response
       return res.status(400).json({ error: 'Invalid order status' });
     }
 
-    const order = db.prepare(`SELECT * FROM orders WHERE id = ? AND business_id = ?`).get(req.params.id, bizId) as any;
+    const order = await db.prepare(`SELECT * FROM orders WHERE id = ? AND business_id = ?`).get(req.params.id, bizId) as any;
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
-    // If changing to Cancelled and wasn't already Cancelled, restore stock atomically
+    // Moving to Cancelled restores stock atomically
     if (status === 'Cancelled' && order.order_status !== 'Cancelled') {
-      db.exec('BEGIN TRANSACTION;');
-      try {
-        const items = db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).all(order.id) as any[];
-        for (const item of items) {
-          const variant = db.prepare(`SELECT * FROM product_variants WHERE id = ? AND business_id = ?`).get(item.variant_id, bizId) as any;
-          if (variant) {
-            const restoredStock = variant.stock_quantity + item.quantity;
-            db.prepare(`
-              UPDATE product_variants
-              SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP
-              WHERE id = ? AND business_id = ?
-            `).run(restoredStock, variant.id, bizId);
-
-            const movId = `mov_cancel_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-            db.prepare(`
-              INSERT INTO inventory_movements (
-                id, business_id, product_id, variant_id, change_qty, balance_after,
-                movement_type, reference_order_id, notes
-              ) VALUES (?, ?, ?, ?, ?, ?, 'CANCELLATION', ?, 'Stock restored due to order status update to Cancelled')
-            `).run(
-              movId,
-              bizId,
-              variant.product_id,
-              variant.id,
-              item.quantity,
-              restoredStock,
-              order.order_number
-            );
-          }
-        }
-
-        db.prepare(`
-          UPDATE orders
-          SET order_status = 'Cancelled',
-              payment_status = COALESCE(?, payment_status),
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ? AND business_id = ?
-        `).run(payment_status, order.id, bizId);
-
-        db.exec('COMMIT;');
-        return res.json({ message: 'Order status updated to Cancelled and inventory restored' });
-      } catch (inner: any) {
-        db.exec('ROLLBACK;');
-        throw inner;
-      }
+      await cancelOrderAndRestock(order, bizId, 'Stock restored due to order status update to Cancelled', payment_status);
+      return res.json({ message: 'Order status updated to Cancelled and inventory restored' });
     }
 
-    db.prepare(`
+    await db.prepare(`
       UPDATE orders
       SET order_status = COALESCE(?, order_status),
           payment_status = COALESCE(?, payment_status),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND business_id = ?
-    `).run(status, payment_status, req.params.id, bizId);
+    `).run(status ?? null, payment_status ?? null, req.params.id, bizId);
 
     res.json({ message: 'Order status updated successfully' });
   } catch (err: any) {
+    if (err instanceof AccountError) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
 
 // POST /api/orders/:id/cancel (Restores stock safely in transaction)
-apiRouter.post('/orders/:id/cancel', authMiddleware, (req: Request, res: Response) => {
+apiRouter.post('/orders/:id/cancel', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
-    const order = db.prepare(`SELECT * FROM orders WHERE id = ? AND business_id = ?`).get(req.params.id, bizId) as any;
+    const bizId = await resolveBusinessId(req);
+    const order = await db.prepare(`SELECT * FROM orders WHERE id = ? AND business_id = ?`).get(req.params.id, bizId) as any;
     if (!order) return res.status(404).json({ error: 'Order not found' });
 
     if (order.order_status === 'Cancelled') {
       return res.status(400).json({ error: 'Order is already cancelled' });
     }
 
-    db.exec('BEGIN TRANSACTION;');
-    try {
-      // 1. Get all items in this order
-      const items = db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).all(order.id) as any[];
-
-      // 2. Restore stock for each variant and record in ledger
-      for (const item of items) {
-        const variant = db.prepare(`SELECT * FROM product_variants WHERE id = ? AND business_id = ?`).get(item.variant_id, bizId) as any;
-        if (variant) {
-          const restoredStock = variant.stock_quantity + item.quantity;
-          db.prepare(`
-            UPDATE product_variants
-            SET stock_quantity = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND business_id = ?
-          `).run(restoredStock, variant.id, bizId);
-
-          const movId = `mov_cancel_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-          db.prepare(`
-            INSERT INTO inventory_movements (
-              id, business_id, product_id, variant_id, change_qty, balance_after,
-              movement_type, reference_order_id, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, 'CANCELLATION', ?, 'Stock restored due to order cancellation')
-          `).run(
-            movId,
-            bizId,
-            variant.product_id,
-            variant.id,
-            item.quantity,
-            restoredStock,
-            order.order_number
-          );
-        }
-      }
-
-      // 3. Update order status to Cancelled
-      db.prepare(`
-        UPDATE orders
-        SET order_status = 'Cancelled', updated_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND business_id = ?
-      `).run(order.id, bizId);
-
-      db.exec('COMMIT;');
-      res.json({ message: `Order #${order.order_number} cancelled and inventory restored successfully.` });
-    } catch (inner: any) {
-      db.exec('ROLLBACK;');
-      throw inner;
-    }
+    await cancelOrderAndRestock(order, bizId, 'Stock restored due to order cancellation');
+    res.json({ message: `Order #${order.order_number} cancelled and inventory restored successfully.` });
   } catch (err: any) {
+    if (err instanceof AccountError) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
@@ -1295,48 +934,61 @@ apiRouter.post('/orders/:id/cancel', authMiddleware, (req: Request, res: Respons
 // AI SHOPPING AGENT ENDPOINTS
 // -------------------------------------------------------------
 // POST /api/ai/chat
-apiRouter.post('/ai/chat', async (req: Request, res: Response) => {
+apiRouter.post('/ai/chat', optionalAuthMiddleware, async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
-    const { message, conversationId, history = [], customerName = 'Guest Customer', customerPhone } = req.body;
+    const bizId = await resolveBusinessId(req);
+    const body = req.body || {};
 
+    // Input guardrails: bounded message, bounded and well-formed history.
+    const message = cleanText(body.message, 1000);
     if (!message) {
       return res.status(400).json({ error: 'Message is required' });
     }
+    const history = (Array.isArray(body.history) ? body.history : [])
+      .slice(-10)
+      .filter((h: any) => h && (h.role === 'user' || h.role === 'assistant') && typeof h.content === 'string')
+      .map((h: any) => ({ role: h.role, content: h.content.slice(0, 1000) }));
+    const customerName = cleanText(body.customerName, 80) || 'Guest Customer';
+    const customerPhone = cleanText(body.customerPhone, 30) || undefined;
 
-    // Run AI Agent (Gemini 3.8 Flash or Deterministic Engine fallback)
+    // Run AI Agent (Gemini or the deterministic engine fallback)
     const aiResult = await runGeminiAgent(bizId, message, history);
 
-    // Persist conversation if conversationId or phone provided
-    let convId = conversationId;
+    // Persist conversation (only ever inside the caller's tenant)
+    let convId: string | undefined;
+    if (typeof body.conversationId === 'string') {
+      const owned = await db.prepare('SELECT id FROM conversations WHERE id = ? AND business_id = ?').get(body.conversationId, bizId) as any;
+      convId = owned?.id;
+    }
     if (!convId && customerPhone) {
-      const existingConv = db.prepare('SELECT id FROM conversations WHERE business_id = ? AND customer_phone = ?').get(bizId, customerPhone) as any;
+      const existingConv = await db.prepare('SELECT id FROM conversations WHERE business_id = ? AND customer_phone = ?').get(bizId, customerPhone) as any;
       if (existingConv) {
         convId = existingConv.id;
       }
     }
 
     if (!convId) {
-      convId = 'conv_' + Date.now();
-      db.prepare(`
+      convId = newId('conv');
+      await db.prepare(`
         INSERT INTO conversations (id, business_id, customer_name, customer_phone, status)
         VALUES (?, ?, ?, ?, 'Open')
       `).run(convId, bizId, customerName, customerPhone || null);
     }
 
     // Save Customer Message
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO messages (id, conversation_id, sender_type, sender_name, content, metadata)
       VALUES (?, ?, 'CUSTOMER', ?, ?, null)
-    `).run('msg_' + Date.now() + '_c', convId, customerName, message);
+    `).run(newId('msg'), convId, customerName, message);
 
     // Save AI Response
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO messages (id, conversation_id, sender_type, sender_name, content, metadata)
-      VALUES (?, ?, 'AI', 'ShopMate AI', ?, ?)
+      VALUES (?, ?, 'AI', ?, ?, ?)
     `).run(
-      'msg_' + Date.now() + '_a',
+      newId('msg'),
       convId,
+      aiResult.assistantName || 'ShopMate AI',
       aiResult.reply,
       JSON.stringify({
         tool: aiResult.toolExecuted,
@@ -1356,32 +1008,32 @@ apiRouter.post('/ai/chat', async (req: Request, res: Response) => {
 });
 
 // POST /api/ai/search-products
-apiRouter.post('/ai/search-products', (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const results = toolSearchProducts({ businessId: bizId, ...req.body });
+apiRouter.post('/ai/search-products', async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const results = await toolSearchProducts({ businessId: bizId, ...req.body });
   res.json(results);
 });
 
 // POST /api/ai/recommendations
-apiRouter.post('/ai/recommendations', (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
+apiRouter.post('/ai/recommendations', async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
   const { categoryId, excludeProductId } = req.body;
-  const results = toolGetRecommendations(bizId, categoryId, excludeProductId);
+  const results = await toolGetRecommendations(bizId, categoryId, excludeProductId);
   res.json(results);
 });
 
 // POST /api/ai/summarise
-apiRouter.post('/ai/summarise', (req: Request, res: Response) => {
+apiRouter.post('/ai/summarise', async (req: Request, res: Response) => {
   const { conversationId } = req.body;
   if (!conversationId) return res.status(400).json({ error: 'conversationId required' });
 
-  const msgs = db.prepare('SELECT sender_type, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC').all(conversationId) as any[];
+  const msgs = await db.prepare('SELECT sender_type, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC').all(conversationId) as any[];
   if (msgs.length === 0) {
     return res.json({ summary: 'No messages in conversation yet.' });
   }
 
   const summary = `Customer engaged in shopping enquiry (${msgs.length} messages). Discussed products, checked size/stock availability, and reviewed cart options.`;
-  db.prepare('UPDATE conversations SET ai_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(summary, conversationId);
+  await db.prepare('UPDATE conversations SET ai_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(summary, conversationId);
 
   res.json({ summary });
 });
@@ -1389,9 +1041,9 @@ apiRouter.post('/ai/summarise', (req: Request, res: Response) => {
 // -------------------------------------------------------------
 // CONVERSATIONS
 // -------------------------------------------------------------
-apiRouter.get('/conversations', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const convs = db.prepare(`
+apiRouter.get('/conversations', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const convs = await db.prepare(`
     SELECT c.*,
       (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id) as message_count,
       (SELECT content FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) as last_message,
@@ -1404,8 +1056,8 @@ apiRouter.get('/conversations', authMiddleware, (req: Request, res: Response) =>
   res.json(convs);
 });
 
-apiRouter.get('/conversations/:id/messages', optionalAuthMiddleware, (req: Request, res: Response) => {
-  const msgs = db.prepare(`
+apiRouter.get('/conversations/:id/messages', optionalAuthMiddleware, async (req: Request, res: Response) => {
+  const msgs = await db.prepare(`
     SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC
   `).all(req.params.id);
   res.json(msgs);
@@ -1414,9 +1066,9 @@ apiRouter.get('/conversations/:id/messages', optionalAuthMiddleware, (req: Reque
 // -------------------------------------------------------------
 // EMPLOYEES
 // -------------------------------------------------------------
-apiRouter.get('/employees', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const employees = db.prepare(`
+apiRouter.get('/employees', authMiddleware, requireRole('BUSINESS_OWNER', 'EMPLOYEE'), async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const employees = await db.prepare(`
     SELECT id, email, name, role, phone, created_at
     FROM users
     WHERE business_id = ? AND role IN ('EMPLOYEE', 'BUSINESS_OWNER')
@@ -1426,25 +1078,25 @@ apiRouter.get('/employees', authMiddleware, (req: Request, res: Response) => {
   res.json(employees);
 });
 
-apiRouter.post('/employees', authMiddleware, (req: Request, res: Response) => {
+apiRouter.post('/employees', authMiddleware, requireRole('BUSINESS_OWNER'), async (req: Request, res: Response) => {
   try {
-    const bizId = resolveBusinessId(req);
+    const bizId = await resolveBusinessId(req);
     const { name, email, password, phone } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ error: 'Name, email, and temporary password are required' });
     }
 
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existing = await db.prepare('SELECT id FROM users WHERE LOWER(email) = ?').get(String(email).trim().toLowerCase());
     if (existing) {
       return res.status(400).json({ error: 'User with this email already exists' });
     }
 
-    const id = 'usr_emp_' + Date.now();
-    db.prepare(`
+    const id = newId('usr_emp');
+    await db.prepare(`
       INSERT INTO users (id, email, password_hash, name, role, business_id, phone)
       VALUES (?, ?, ?, ?, 'EMPLOYEE', ?, ?)
-    `).run(id, email, hashPassword(password), name, bizId, phone || null);
+    `).run(id, email.trim().toLowerCase(), await hashPassword(password), name, bizId, phone || null);
 
     res.status(201).json({ id, name, email, role: 'EMPLOYEE' });
   } catch (err: any) {
@@ -1455,41 +1107,41 @@ apiRouter.post('/employees', authMiddleware, (req: Request, res: Response) => {
 // -------------------------------------------------------------
 // ANALYTICS & REPORTING
 // -------------------------------------------------------------
-apiRouter.get('/analytics/overview', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
+apiRouter.get('/analytics/overview', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
 
-  const totalRevenue = (db.prepare(`
+  const totalRevenue = (await db.prepare(`
     SELECT COALESCE(SUM(total_amount), 0) as rev FROM orders WHERE business_id = ? AND order_status != 'Cancelled'
   `).get(bizId) as any).rev;
 
-  const totalOrders = (db.prepare(`
+  const totalOrders = (await db.prepare(`
     SELECT COUNT(*) as count FROM orders WHERE business_id = ?
   `).get(bizId) as any).count;
 
-  const pendingOrders = (db.prepare(`
+  const pendingOrders = (await db.prepare(`
     SELECT COUNT(*) as count FROM orders WHERE business_id = ? AND order_status IN ('Pending', 'Confirmed', 'Processing', 'Packed')
   `).get(bizId) as any).count;
 
-  const completedOrders = (db.prepare(`
+  const completedOrders = (await db.prepare(`
     SELECT COUNT(*) as count FROM orders WHERE business_id = ? AND order_status = 'Delivered'
   `).get(bizId) as any).count;
 
-  const totalCustomers = (db.prepare(`
+  const totalCustomers = (await db.prepare(`
     SELECT COUNT(*) as count FROM customers WHERE business_id = ?
   `).get(bizId) as any).count;
 
-  const totalProducts = (db.prepare(`
+  const totalProducts = (await db.prepare(`
     SELECT COUNT(*) as count FROM products WHERE business_id = ? AND is_archived = 0
   `).get(bizId) as any).count;
 
-  const lowStockCount = (db.prepare(`
+  const lowStockCount = (await db.prepare(`
     SELECT COUNT(DISTINCT p.id) as count
     FROM products p
     JOIN product_variants v ON p.id = v.product_id
     WHERE p.business_id = ? AND p.is_archived = 0 AND v.stock_quantity <= p.min_stock_threshold AND v.stock_quantity > 0
   `).get(bizId) as any).count;
 
-  const outOfStockCount = (db.prepare(`
+  const outOfStockCount = (await db.prepare(`
     SELECT COUNT(DISTINCT p.id) as count
     FROM products p
     JOIN product_variants v ON p.id = v.product_id
@@ -1497,7 +1149,7 @@ apiRouter.get('/analytics/overview', authMiddleware, (req: Request, res: Respons
   `).get(bizId) as any).count;
 
   // Recent 5 orders
-  const recentOrders = db.prepare(`
+  const recentOrders = await db.prepare(`
     SELECT o.*, c.name as customer_name
     FROM orders o
     JOIN customers c ON o.customer_id = c.id
@@ -1506,7 +1158,7 @@ apiRouter.get('/analytics/overview', authMiddleware, (req: Request, res: Respons
   `).all(bizId);
 
   // Best selling products
-  const bestSellers = db.prepare(`
+  const bestSellers = await db.prepare(`
     SELECT p.name, p.sku, SUM(oi.quantity) as units_sold, SUM(oi.total_price) as revenue
     FROM order_items oi
     JOIN products p ON oi.product_id = p.id
@@ -1532,10 +1184,10 @@ apiRouter.get('/analytics/overview', authMiddleware, (req: Request, res: Respons
   });
 });
 
-apiRouter.get('/analytics/sales', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
+apiRouter.get('/analytics/sales', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
   // Group sales by day for actual trends
-  const dailySales = db.prepare(`
+  const dailySales = await db.prepare(`
     SELECT substr(order_date, 1, 10) as date,
            COUNT(*) as order_count,
            SUM(total_amount) as revenue
@@ -1545,7 +1197,7 @@ apiRouter.get('/analytics/sales', authMiddleware, (req: Request, res: Response) 
     ORDER BY date ASC
   `).all(bizId);
 
-  const categoryShare = db.prepare(`
+  const categoryShare = await db.prepare(`
     SELECT COALESCE(c.name, 'Uncategorized') as category,
            SUM(oi.quantity) as units,
            SUM(oi.total_price) as revenue
@@ -1566,17 +1218,17 @@ apiRouter.get('/analytics/sales', authMiddleware, (req: Request, res: Response) 
 // -------------------------------------------------------------
 // INTEGRATIONS & WHATSAPP
 // -------------------------------------------------------------
-apiRouter.get('/integrations', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
-  const integrations = db.prepare('SELECT * FROM integrations WHERE business_id = ?').all(bizId);
+apiRouter.get('/integrations', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const integrations = await db.prepare('SELECT * FROM integrations WHERE business_id = ?').all(bizId);
   res.json(integrations);
 });
 
-apiRouter.put('/integrations/:id', authMiddleware, (req: Request, res: Response) => {
-  const bizId = resolveBusinessId(req);
+apiRouter.put('/integrations/:id', authMiddleware, async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
   const { status, phone_number, settings } = req.body;
 
-  db.prepare(`
+  await db.prepare(`
     UPDATE integrations
     SET status = COALESCE(?, status),
         phone_number = COALESCE(?, phone_number),
@@ -1589,7 +1241,7 @@ apiRouter.put('/integrations/:id', authMiddleware, (req: Request, res: Response)
 });
 
 // WhatsApp Webhook Simulator & Meta verification endpoint
-apiRouter.get('/webhooks/whatsapp', (req: Request, res: Response) => {
+apiRouter.get('/webhooks/whatsapp', async (req: Request, res: Response) => {
   // Support Meta WhatsApp Webhook verification challenge
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -1609,7 +1261,7 @@ apiRouter.post('/webhooks/whatsapp', async (req: Request, res: Response) => {
     // Handle incoming message simulation
     const fromNumber = payload.from || payload.contacts?.[0]?.wa_id || '';
     const messageBody = payload.text || payload.messages?.[0]?.text?.body || 'Hello';
-    const firstBiz = db.prepare('SELECT id FROM businesses WHERE is_active = 1 ORDER BY created_at ASC LIMIT 1').get() as { id: string } | undefined;
+    const firstBiz = await db.prepare('SELECT id FROM businesses WHERE is_active = 1 ORDER BY COALESCE(is_demo, 0) DESC, created_at ASC LIMIT 1').get() as { id: string } | undefined;
     const bizId = payload.businessId || firstBiz?.id || '';
 
     const aiRes = await runGeminiAgent(bizId, messageBody);

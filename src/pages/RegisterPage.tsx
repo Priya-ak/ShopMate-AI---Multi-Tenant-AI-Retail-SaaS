@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Store, Mail, Lock, Phone, ArrowRight, AlertCircle } from 'lucide-react';
+import { GoogleAuthButton } from '../components/GoogleAuthButton';
 
 interface RegisterPageProps {
   onSuccess: () => void;
@@ -9,7 +10,7 @@ interface RegisterPageProps {
 }
 
 export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onGoToLogin }) => {
-  const { register } = useAuth();
+  const { register, googleAuth } = useAuth();
   const [businessName, setBusinessName] = useState('');
   const [businessCategory, setBusinessCategory] = useState('Clothing & Ethnic Fashion');
   const [name, setName] = useState('');
@@ -18,6 +19,29 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onGoToLog
   const [phone, setPhone] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  const cleanedPhone = phone.trim().replace(/[\s\-\(\)]/g, '');
+  const googleReady = businessName.trim().length > 0 && cleanedPhone.length >= 8;
+
+  const handleGoogle = async (credential: string) => {
+    setErrorMsg(null);
+    setIsLoading(true);
+    try {
+      await googleAuth({
+        credential,
+        mode: 'register',
+        name: name.trim() || undefined,
+        businessName: businessName.trim(),
+        businessCategory,
+        phone: cleanedPhone,
+      });
+      onSuccess();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Google registration failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,7 +178,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onGoToLog
               required
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Choose a secure password"
+              minLength={8}
+              placeholder="At least 8 characters"
               className="w-full px-3 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white focus:outline-none focus:border-indigo-500 font-mono"
             />
           </div>
@@ -168,6 +193,20 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({ onSuccess, onGoToLog
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
+
+        <div className="space-y-3">
+          <div className="flex items-center gap-3 text-[10px] uppercase tracking-wider text-slate-500">
+            <span className="flex-1 h-px bg-slate-800" />
+            <span>or register with Google</span>
+            <span className="flex-1 h-px bg-slate-800" />
+          </div>
+          <GoogleAuthButton
+            onCredential={handleGoogle}
+            text="signup_with"
+            disabled={!googleReady || isLoading}
+            disabledHint="Enter your store name and phone number above, then continue with Google."
+          />
+        </div>
 
         <div className="text-center text-xs text-slate-400 pt-2">
           Already registered?{' '}
