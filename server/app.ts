@@ -1,7 +1,7 @@
 import express, { NextFunction, Request, Response } from 'express';
 import { apiRouter } from './routes.js';
 import { ensureApp } from './bootstrap.js';
-import { DatabaseNotConfiguredError, driver } from './db.js';
+import { DatabaseNotConfiguredError, driver, schemaReport } from './db.js';
 
 /**
  * Builds the Express application (API only). It is used by the local/AI Studio server (server.ts)
@@ -33,6 +33,18 @@ export function createApp() {
       googleConfigured: !!process.env.GOOGLE_CLIENT_ID,
       superAdminConfigured: !!process.env.SUPERADMIN_EMAIL,
     });
+  });
+
+  // Schema self-check: lists declared columns that the connected database is still missing (names only, no data).
+  app.get('/api/health/schema', async (_req, res) => {
+    try {
+      const r = await schemaReport();
+      res.json({ ok: r.missing.length === 0, ...r });
+    } catch (err: any) {
+      if (err instanceof DatabaseNotConfiguredError) return res.status(503).json({ ok: false, error: 'Database not configured' });
+      console.error('[health] schema check failed:', err?.message);
+      res.status(500).json({ ok: false, error: 'Schema check failed. See server logs.' });
+    }
   });
 
   // Make sure the database is migrated before any API route runs.
