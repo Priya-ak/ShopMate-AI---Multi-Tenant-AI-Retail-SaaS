@@ -535,6 +535,23 @@ function declaredColumns(): Map<string, Array<{ name: string; ddl: string }>> {
     }
     out.set(m[1], cols);
   }
+  for (const [table, name, ddl] of ADDED_COLUMNS) {
+    const list = out.get(table);
+    if (list && !list.some((c) => c.name === name)) list.push({ name, ddl: ddl.replace(/NOT NULL/gi, '').trim() });
+  }
+  return out;
+}
+
+/** UNIQUE(a, b) table constraints declared in BASE_SCHEMA, so pre-existing tables can be given the same rules. */
+function declaredUniques(): Array<{ table: string; cols: string[] }> {
+  const out: Array<{ table: string; cols: string[] }> = [];
+  const re = /CREATE TABLE IF NOT EXISTS (\w+) \(([\s\S]*?)\n  \);/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(BASE_SCHEMA))) {
+    for (const u of m[2].matchAll(/UNIQUE\s*\(([^)]+)\)/gi)) {
+      out.push({ table: m[1], cols: u[1].split(',').map((x) => x.trim()) });
+    }
+  }
   return out;
 }
 
@@ -563,77 +580,156 @@ function pgSchema(sql: string) {
 }
 
 
-/** Brings pre-existing tables in line with the declared schema. Each step is isolated: one failure never blocks start-up. */
-async function reconcilePostgresColumns(client: any) {
+const baseType = (ddl: string) => (ddl.trim().split(/\s+/)[0] || 'TEXT').toUpperCase();
+const defaultOf = (ddl: string) => /\bDEFAULT\s+((?:'[^']*'|[\w.()+-]+))/i.exec(ddl)?.[1];
+
+/**
+ * Brings pre-existing tables in line with the declared schema using ONE catalog read, then only the DDL that is
+ * actually needed (a fresh or already-correct database runs zero DDL). Every step is isolated by a savepoint, and
+ * as soon as the database reports a lock conflict the repair stops instead of waiting (returns false = incomplete).
+ */
+async function reconcilePostgresColumns(client: any): Promise<boolean> {
+  let complete = true;
   const attempt = async (label: string, sql: string) => {
+    if (!complete) return;
     await client.query('SAVEPOINT recon');
     try {
       await client.query(sql);
       await client.query('RELEASE SAVEPOINT recon');
     } catch (err: any) {
       await client.query('ROLLBACK TO SAVEPOINT recon');
-      console.error(`[db] schema reconcile skipped (${label}):`, err?.message);
+      if (err?.code === '55P03' || err?.code === '57014') {
+        complete = false; // lock wait / statement timeout: stop here, retry on the next cold start
+        console.error(`[db] schema repair paused (${label}): ${err.message}`);
+      } else {
+        console.error(`[db] schema reconcile skipped (${label}):`, err?.message);
+      }
     }
   };
+
   const declared = declaredColumns();
+  const tables = [...declared.keys()];
+  const inList = tables.map((t) => `'${t}'`).join(', '); // internal constant identifiers only
+  const colRows = (await client.query(
+    `SELECT table_name, column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN (${inList})`)).rows;
+  const idxRows = (await client.query(
+    `SELECT tablename, indexdef FROM pg_indexes WHERE schemaname = 'public' AND tablename IN (${inList})`)).rows;
+  // True when a UNIQUE index (including a primary key) already covers exactly these columns.
+  const hasUnique = (table: string, cols: string[]) =>
+    idxRows.some((r: any) => r.tablename === table && /UNIQUE/i.test(r.indexdef) && new RegExp(`\\(${cols.join(',\\s*')}\\)`).test(r.indexdef));
+  const byTable = new Map<string, Map<string, any>>();
+  for (const r of colRows) {
+    if (!byTable.has(r.table_name)) byTable.set(r.table_name, new Map());
+    byTable.get(r.table_name)!.set(r.column_name, r);
+  }
+  const uniques = declaredUniques();
+
   for (const [table, cols] of declared) {
+    const have = byTable.get(table);
+    if (!have) continue; // just created by BASE_SCHEMA with the correct shape
     for (const c of cols) {
-      await attempt(`${table}.${c.name}`, `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${c.name} ${pgSchema(c.ddl)}`);
+      const cur = have.get(c.name);
+      if (!cur) {
+        await attempt(`${table}.${c.name} add`, `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${c.name} ${pgSchema(c.ddl)}`);
+        continue;
+      }
+      // Same name, different type (e.g. boolean / timestamptz / numeric created by another tool): convert in place.
+      const want = baseType(c.ddl);
+      const t: string = cur.data_type;
+      const def = defaultOf(c.ddl);
+      let using: string | null = null;
+      let target = '';
+      if ((want === 'INTEGER' || want === 'INT') && t === 'boolean') { target = 'INTEGER'; using = `CASE WHEN ${c.name} THEN 1 ELSE 0 END`; }
+      else if (want === 'TEXT' && !['text', 'character varying', 'character'].includes(t)) { target = 'TEXT'; using = `${c.name}::text`; }
+      else if (want === 'REAL' && ['numeric', 'integer', 'bigint', 'smallint', 'real'].includes(t)) { target = 'DOUBLE PRECISION'; using = `${c.name}::double precision`; }
+      if (using) {
+        const dflt = def !== undefined ? ` , ALTER COLUMN ${c.name} SET DEFAULT ${def}` : '';
+        await attempt(`${table}.${c.name} type ${t}->${target}`,
+          `ALTER TABLE ${table} ALTER COLUMN ${c.name} DROP DEFAULT, ALTER COLUMN ${c.name} TYPE ${target} USING ${using}${dflt}`);
+      }
+    }
+    const keyCol = table === 'app_meta' ? 'key' : 'id';
+    if (cols.some((c) => c.name === keyCol) && !hasUnique(table, [keyCol])) {
+      await attempt(`${table}.${keyCol} unique`, `CREATE UNIQUE INDEX IF NOT EXISTS uq_${table}_${keyCol} ON ${table}(${keyCol})`);
+    }
+    for (const u of uniques.filter((x) => x.table === table)) {
+      const name = `uq_${table}_${u.cols.join('_')}`;
+      if (!hasUnique(table, u.cols)) await attempt(`${table} unique(${u.cols.join(',')})`, `CREATE UNIQUE INDEX IF NOT EXISTS ${name} ON ${table}(${u.cols.join(', ')})`);
     }
     // Leftover legacy columns that this app never writes must not block inserts.
     const known = new Set(cols.map((c) => c.name));
-    const extra = await client.query(
-      `SELECT column_name FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = $1 AND is_nullable = 'NO' AND column_default IS NULL`,
-      [table]
-    );
-    for (const r of extra.rows) {
-      if (!known.has(r.column_name) && r.column_name !== 'id') {
-        await attempt(`${table}.${r.column_name} drop not null`, `ALTER TABLE ${table} ALTER COLUMN ${r.column_name} DROP NOT NULL`);
+    for (const [name, cur] of have) {
+      if (!known.has(name) && name !== 'id' && cur.is_nullable === 'NO' && cur.column_default == null) {
+        await attempt(`${table}.${name} drop not null`, `ALTER TABLE ${table} ALTER COLUMN ${name} DROP NOT NULL`);
       }
     }
   }
+  return complete;
 }
 
-async function initPostgres() {
+async function initPostgres(): Promise<boolean> {
   const p = await getPool();
   const existing = await p.query(`SELECT to_regclass('public.app_meta') AS t`);
   if (existing.rows[0]?.t) {
     const v = await p.query(`SELECT value FROM app_meta WHERE key = 'schema_version'`);
-    if (v.rows[0]?.value === SCHEMA_VERSION) return; // already migrated: skip DDL on warm/cold starts
+    if (v.rows[0]?.value === SCHEMA_VERSION) return true; // already migrated: skip DDL on warm/cold starts
   }
 
   const client = await p.connect();
   try {
     await client.query('BEGIN');
+    // Never hang a request on a blocked migration: give up quickly and retry on the next cold start.
+    await client.query(`SET LOCAL lock_timeout = '4s'`);
+    await client.query(`SET LOCAL statement_timeout = '12s'`);
     // Serialise concurrent cold starts (transaction-scoped, safe behind pgbouncer).
     await client.query('SELECT pg_advisory_xact_lock(727272)');
     await client.query(toPostgresSql(pgSchema(BASE_SCHEMA)).text);
-    for (const [table, column, ddl] of ADDED_COLUMNS) {
-      await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${ddl}`);
+    let complete = await reconcilePostgresColumns(client);
+
+    const indexes = INDEXES.split(';').map((x) => x.trim()).filter(Boolean);
+    for (const stmt of indexes) {
+      if (!complete) break;
+      await client.query('SAVEPOINT idx');
+      try { await client.query(stmt); await client.query('RELEASE SAVEPOINT idx'); }
+      catch (err: any) {
+        await client.query('ROLLBACK TO SAVEPOINT idx');
+        if (err?.code === '55P03' || err?.code === '57014') { complete = false; console.error('[db] index step paused:', err.message); }
+        else console.error('[db] index skipped:', stmt.slice(0, 80), '-', err?.message);
+      }
     }
-    await reconcilePostgresColumns(client);
-    await client.query(INDEXES);
-    // Supabase exposes `public` through its Data API. The app uses a direct server-side
-    // connection (table owner, bypasses RLS), so lock the tables down for anon/authenticated roles.
-    for (const t of TABLES) {
-      await client.query(`ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY`);
+    // Supabase exposes `public` through its Data API. The app uses a direct server-side connection
+    // (table owner, bypasses RLS), so lock the tables down for anon/authenticated roles (only if not already on).
+    if (complete) {
+      const rls = await client.query(`SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relrowsecurity = false AND relname IN (${TABLES.map((t) => `'${t}'`).join(', ')})`);
+      for (const r of rls.rows) {
+        await client.query('SAVEPOINT rls');
+        try { await client.query(`ALTER TABLE ${r.relname} ENABLE ROW LEVEL SECURITY`); await client.query('RELEASE SAVEPOINT rls'); }
+        catch (err: any) { await client.query('ROLLBACK TO SAVEPOINT rls'); if (err?.code === '55P03') { complete = false; break; } }
+      }
     }
-    await client.query(
-      `INSERT INTO app_meta (key, value) VALUES ('schema_version', $1)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      [SCHEMA_VERSION]
-    );
+    if (complete) {
+      await client.query('DELETE FROM app_meta WHERE key = $1', ['schema_version']);
+      await client.query('INSERT INTO app_meta (key, value) VALUES ($1, $2)', ['schema_version', SCHEMA_VERSION]);
+    } else {
+      console.error('[db] schema repair incomplete; the app keeps serving and will retry on the next cold start.');
+    }
     await client.query('COMMIT');
-  } catch (err) {
+    return complete;
+  } catch (err: any) {
     try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+    // A blocked/slow migration must not take the whole API down: log it and serve with the current schema.
+    if (err?.code === '55P03' || err?.code === '57014') {
+      console.error('[db] schema migration timed out; serving with the current schema:', err.message);
+      return false;
+    }
     throw err;
   } finally {
     client.release();
   }
 }
 
-async function initSqlite() {
+async function initSqlite(): Promise<boolean> {
   const conn = await getSqlite();
   conn.exec(BASE_SCHEMA);
   for (const [table, column, ddl] of ADDED_COLUMNS) {
@@ -652,16 +748,23 @@ async function initSqlite() {
     }
   }
   conn.exec(INDEXES);
+  return true;
 }
 
 let ready: Promise<void> | null = null;
+let retryAt = 0; // set when the schema repair could not finish (e.g. a table was locked); try again after this time
 
 /** Idempotent, memoised schema bootstrap. Safe to call on every request. */
 export function ensureDatabase(): Promise<void> {
+  if (ready && retryAt && Date.now() > retryAt) {
+    ready = null;
+    retryAt = 0;
+  }
   if (!ready) {
     ready = (isPostgres ? initPostgres() : initSqlite())
-      .then(() => {
-        console.log(`Database ready (${driver}).`);
+      .then((complete) => {
+        retryAt = complete ? 0 : Date.now() + 30_000;
+        console.log(`Database ready (${driver})${complete ? '' : ' - schema repair incomplete, will retry'}.`);
       })
       .catch((err) => {
         ready = null; // allow a retry on the next request
@@ -669,6 +772,28 @@ export function ensureDatabase(): Promise<void> {
       });
   }
   return ready;
+}
+
+/** Read-only report: which declared columns are missing from the connected database (no secrets, no data). */
+export async function schemaReport(): Promise<{ driver: Driver; schemaVersion: string | null; missing: string[] }> {
+  await ensureDatabase();
+  const missing: string[] = [];
+  let schemaVersion: string | null = null;
+  for (const [table, cols] of declaredColumns()) {
+    let have: Set<string>;
+    if (isPostgres) {
+      const p = await getPool();
+      const r = await p.query(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`, [table]);
+      have = new Set(r.rows.map((x: any) => x.column_name));
+    } else {
+      const conn = await getSqlite();
+      have = new Set((conn.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name));
+    }
+    if (have.size === 0) missing.push(`${table} (table missing)`);
+    else for (const c of cols) if (!have.has(c.name)) missing.push(`${table}.${c.name}`);
+  }
+  try { schemaVersion = (await db.prepare(`SELECT value FROM app_meta WHERE key = 'schema_version'`).get() as any)?.value ?? null; } catch { /* ignore */ }
+  return { driver, schemaVersion, missing };
 }
 
 /** Backwards-compatible alias used by server.ts and the test-suite. */
