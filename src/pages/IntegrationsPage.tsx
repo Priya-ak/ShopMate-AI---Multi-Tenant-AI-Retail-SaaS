@@ -134,7 +134,7 @@ export const IntegrationsPage: React.FC<IntegrationsPageProps> = () => {
           response_type: 'code',
           override_default_response_type: true,
           // Coexistence: onboard an existing WhatsApp Business app number (scan a QR code with the phone).
-          extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3' },
+          extras: { setup: {}, featureType: 'whatsapp_business_app_onboarding', sessionInfoVersion: '3', version: 'v4' },
         }
       );
     } catch (err: any) {
