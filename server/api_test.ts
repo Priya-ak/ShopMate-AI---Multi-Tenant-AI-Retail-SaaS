@@ -109,6 +109,59 @@ r = await call('POST', `/orders/${orderId}/cancel`, {}, ownerToken); ok(r.s >= 4
 r = await call('GET', '/products', undefined, ownerToken); ok(r.j.products[0].variants[0].stock_quantity === 10, 'stock restored after cancel', r.j.products[0].variants);
 r = await call('POST', '/orders', { customerName: 'B', customerPhone: '+91 97000 00001', deliveryAddress: 'x', items: [{ productId: prod.id, variantId: variant.id, quantity: 999 }] }, ownerToken); ok(r.s >= 400, 'oversell rejected', r);
 
+console.log('# end-to-end journey: category with image, employee, customer');
+const IMG = 'data:image/jpeg;base64,' + 'A'.repeat(90000);
+r = await call('POST', '/categories', { name: 'Designer Kurtis', description: '', image_url: IMG }, ownerToken); ok(r.s === 201, 'create category WITH banner image (the reported bug)', r);
+const kurtiCat = r.j.id;
+r = await call('GET', '/categories', undefined, ownerToken); ok(r.j.some((c: any) => c.id === kurtiCat && c.image_url === IMG), 'category image stored and returned', r.s);
+r = await call('POST', '/categories', { name: 'Designer Kurtis' }, ownerToken); ok(r.s === 409 && !/constraint|relation|column/i.test(r.j.error), 'duplicate category -> friendly 409, no database text', r);
+r = await call('POST', '/categories', { name: '' }, ownerToken); ok(r.s === 400, 'category name required', r);
+r = await call('POST', '/products', { name: 'Anarkali Kurti', category_id: kurtiCat, sku: 'AK-1', regular_price: 1500, colour: 'Pink', sizes: ['M', 'L'], image_url: IMG, variants: [{ size: 'M', colour: 'Pink', stock_quantity: 5, sku: 'AK-1-M' }, { size: 'L', colour: 'Pink', stock_quantity: 3, sku: 'AK-1-L' }] }, ownerToken);
+ok(r.s === 201 || r.s === 200, 'create product in new category', r);
+r = await call('POST', '/products', { name: 'Dup SKU', category_id: kurtiCat, sku: 'AK-1', regular_price: 10, variants: [{ size: 'M', stock_quantity: 1, sku: 'AK-1-M' }] }, ownerToken); ok(r.s < 500, 'duplicate SKU never returns a 500 / raw SQL error', r);
+r = await call('POST', '/auth/login', { email: 'asha@example.com', password: 'employee1' }); ok(r.s === 200 && r.j.user.role === 'EMPLOYEE', 'new employee can log in', r);
+const empTok = r.j.token;
+r = await call('GET', '/products', undefined, empTok); ok(r.s === 200 && r.j.products.length >= 2, 'employee sees the store catalogue', r.s);
+r = await call('POST', '/categories', { name: 'Employee Cat' }, empTok); ok(r.s === 201 || r.s === 403, 'employee category request handled', r.s);
+r = await call('PUT', '/businesses/me', { assistant_name: 'Nope' }, empTok); ok(r.s === 403, 'employee cannot change store settings', r);
+r = await call('GET', '/employees', undefined, empTok); ok(r.s === 200, 'employee can list team', r.s);
+r = await call('POST', '/customers', { name: 'Meena Customer', phone: '+91 96000 00009', email: 'meena@example.com' }, ownerToken); ok(r.s === 201 || r.s === 200, 'owner adds a customer', r);
+r = await call('GET', '/customers', undefined, ownerToken); ok(Array.isArray(r.j) ? r.j.some((c: any) => /Meena/.test(c.name)) : JSON.stringify(r.j).includes('Meena'), 'customer listed', r.s);
+const kp = (await call('GET', '/products', undefined, ownerToken)).j.products.find((x: any) => x.name === 'Anarkali Kurti');
+r = await call('POST', '/orders', { customerName: 'Meena Customer', customerPhone: '+91 96000 00009', deliveryAddress: '5 Lake Rd', items: [{ productId: kp.id, variantId: kp.variants[0].id, quantity: 1 }] }, empTok); ok(r.s === 201 && r.j.success, 'employee creates an order for the customer', r);
+const empOrder = r.j.orderId;
+r = await call('PUT', `/orders/${empOrder}/status`, { status: 'Shipped' }, empTok); ok(r.s === 200, 'employee updates order status', r);
+r = await call('GET', '/analytics/overview', undefined, ownerToken); ok(r.s === 200, 'analytics overview', r);
+r = await call('GET', '/inventory', undefined, ownerToken); ok(r.s === 200, 'inventory list', r.s);
+r = await call('DELETE', `/categories/${kurtiCat}`, undefined, ownerToken); ok(r.s === 400, 'cannot delete a category that still has products', r);
+
+console.log('# CRUD audit: every create / read / update / delete the UI uses');
+r = await call('GET', '/health/schema'); ok(r.s === 200 && r.j.ok === true && r.j.missing.length === 0, 'schema self-check reports no missing columns', r);
+const crudCat = (await call('POST', '/categories', { name: 'CRUD Cat', description: 'd', image_url: 'data:image/png;base64,AAAA' }, ownerToken)).j.id;
+const full = { name: 'Pure Cotton Chikankari Kurti', sku: 'KK-NEW-631', category_id: crudCat, brand: 'KalaKriti Heritage', regular_price: 1499, discount_price: 1199, colour: 'Ivory White', sizes: ['S', 'M', 'L', 'XL'], images: ['data:image/jpeg;base64,' + 'B'.repeat(60000)], min_stock_threshold: 5, initial_stock: 15, description: 'Elegant kurti' };
+r = await call('POST', '/products', full, ownerToken); ok(r.s === 201 || r.s === 200, 'create product with brand, images, sizes (reported bug)', r);
+let all = (await call('GET', '/products', undefined, ownerToken)).j.products;
+let cp = all.find((x: any) => x.sku === 'KK-NEW-631');
+ok(cp && cp.brand === 'KalaKriti Heritage' && cp.variants.length >= 1, 'product read back with brand + seeded variants', cp);
+r = await call('PUT', `/products/${cp.id}`, { ...full, name: 'Chikankari Kurti v2', regular_price: 1599, brand: 'KalaKriti' }, ownerToken); ok(r.s === 200, 'update product', r);
+all = (await call('GET', '/products', undefined, ownerToken)).j.products; cp = all.find((x: any) => x.sku === 'KK-NEW-631');
+ok(cp.name === 'Chikankari Kurti v2' && Number(cp.regular_price) === 1599 && cp.brand === 'KalaKriti', 'product update persisted', cp);
+r = await call('PUT', `/inventory/${cp.variants[0].id}`, { adjustment_qty: 5, movement_type: 'PURCHASE', notes: 'new batch' }, ownerToken); ok(r.s === 200, 'inventory restock', r);
+r = await call('PUT', `/inventory/${cp.variants[0].id}`, { adjustment_qty: 1, movement_type: 'BOGUS' }, ownerToken); ok(r.s === 400, 'invalid movement type -> 400, not 500', r);
+r = await call('PUT', `/inventory/${cp.variants[0].id}`, { adjustment_qty: -9999 }, ownerToken); ok(r.s === 400, 'negative stock rejected', r);
+r = await call('GET', '/inventory/movements', undefined, ownerToken); ok(r.s === 200, 'inventory movements', r.s);
+r = await call('POST', '/products/bulk-csv', { items: [{ name: 'CSV Kurti', sku: 'CSV-1', regular_price: 999, brand: 'B', colour: 'Red', sizes: 'M,L', description: 'x' }, { name: 'CSV Kurti', sku: 'CSV-1', regular_price: 999 }] }, ownerToken); ok(r.s === 200 || r.s === 201, 'bulk CSV upload (duplicate SKU skipped)', r);
+r = await call('GET', '/products/export-csv', undefined, ownerToken); ok(r.s === 200 || r.s === 404, 'CSV export responds', r.s);
+r = await call('DELETE', `/products/${cp.id}`, undefined, ownerToken); ok(r.s === 200, 'delete product', r);
+all = (await call('GET', '/products', undefined, ownerToken)).j.products; ok(!all.some((x: any) => x.sku === 'KK-NEW-631'), 'deleted product no longer listed', all.length);
+r = await call('DELETE', `/categories/${crudCat}`, undefined, ownerToken); ok(r.s === 200, 'delete empty category', r);
+r = await call('GET', '/categories', undefined, ownerToken); ok(!r.j.some((c: any) => c.id === crudCat), 'deleted category gone', r.s);
+r = await call('PUT', '/businesses/me', { name: 'Ravi Textiles Pvt', ai_greeting: 'Hello' }, ownerToken); ok(r.s === 200, 'update store profile', r);
+r = await call('PUT', '/businesses/me', { name: 'Ravi Textiles' }, ownerToken); ok(r.s === 200, 'restore store name', r);
+for (const persona of ['OWNER', 'EMPLOYEE', 'CUSTOMER', 'SUPER_ADMIN']) {
+  r = await call('POST', '/auth/demo-login', { persona }); ok(r.s === 200 && r.j.token, `demo login ${persona}`, r);
+}
+
 console.log('# AI chat uses the tenant assistant');
 r = await call('POST', '/ai/chat', { message: 'Show me blue sarees' }, ownerToken); ok(r.s === 200 && r.j.reply, 'tenant chat reply', r);
 r = await call('POST', '/ai/chat', { message: '' }, ownerToken); ok(r.s === 400, 'empty chat message -> 400', r);
@@ -167,14 +220,14 @@ r = await call('GET', '/superadmin/overview', undefined, saToken); const ov = r.
 ok(r.s === 200 && ov.totals.businesses === 2 && ov.totals.owners === 2 && Array.isArray(ov.warnings) && ov.warnings.length === 0, 'overview excludes demo data by default, no warnings', ov?.totals);
 ok(ov.activity.demoVisits >= 4, 'demo visits counted', ov.activity);
 ok(ov.activity.logins7d >= 2 && ov.activity.failed24h >= 1, 'login counters', ov.activity);
-ok(ov.totals.buyers === 1 && ov.totals.orders === 1, 'buyers + orders counted', ov.totals);
+ok(ov.totals.buyers === 2 && ov.totals.orders === 2, 'buyers + orders counted', ov.totals);
 r = await call('GET', '/superadmin/overview?include_demo=1', undefined, saToken); ok(r.j.totals.businesses === 3, 'include_demo adds demo tenant', r.j.totals);
 r = await call('GET', '/superadmin/logins?limit=5', undefined, saToken); ok(r.s === 200 && r.j.rows.length > 0 && r.j.total >= r.j.rows.length && r.j.rows.every((x: any) => x.method !== 'demo'), 'logins list excludes demo', r.j.rows?.map((x: any) => x.method));
 r = await call('GET', '/superadmin/logins?status=failed', undefined, saToken); ok(r.j.rows.length >= 1 && r.j.rows.every((x: any) => x.success === false), 'logins failed filter', r.j);
 r = await call('GET', '/superadmin/logins?q=owner1', undefined, saToken); ok(r.j.rows.length >= 1, 'logins search', r.j);
 r = await call('GET', '/superadmin/users', undefined, saToken); ok(r.j.rows.some((u: any) => u.email === 'owner1@example.com' && u.login_count >= 1) && !r.j.rows.some((u: any) => u.email.endsWith('@shopmate.com')), 'users list (login_count, no demo)', r.j.rows?.map((u: any) => u.email));
-r = await call('GET', '/superadmin/buyers', undefined, saToken); ok(r.j.rows.length === 1 && r.j.rows[0].business_name === 'Ravi Textiles' && r.j.rows[0].total_orders === 1, 'buyers list', r.j.rows);
-r = await call('GET', '/superadmin/businesses', undefined, saToken); ok(r.j.rows.length === 2 && r.j.rows.some((x: any) => x.owner_email === 'owner1@example.com' && x.orders === 1), 'businesses list', r.j.rows);
+r = await call('GET', '/superadmin/buyers', undefined, saToken); ok(r.j.rows.length === 2 && r.j.rows.every((x: any) => x.business_name === 'Ravi Textiles') && r.j.rows.some((x: any) => x.name === 'Buyer One' && x.total_orders === 1), 'buyers list', r.j.rows);
+r = await call('GET', '/superadmin/businesses', undefined, saToken); ok(r.j.rows.length === 2 && r.j.rows.some((x: any) => x.owner_email === 'owner1@example.com' && x.orders === 2), 'businesses list', r.j.rows);
 r = await call('GET', '/superadmin/orders?status=Cancelled', undefined, saToken); ok(r.j.rows.length === 1, 'orders list + status filter', r.j.rows);
 r = await call('GET', '/superadmin/users?q=%25%27%3B--', undefined, saToken); ok(r.s === 200, 'search input is safe', r.s);
 

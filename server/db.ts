@@ -24,7 +24,7 @@ const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 export const driver: Driver = DATABASE_URL ? 'postgres' : 'sqlite';
 export const isPostgres = driver === 'postgres';
 
-const SCHEMA_VERSION = '2026-11-09.1';
+const SCHEMA_VERSION = '2026-11-11.1';
 
 // ---------------------------------------------------------------------------
 // SQL dialect helpers (pure functions, unit-tested)
@@ -506,6 +506,38 @@ const ADDED_COLUMNS: Array<[table: string, column: string, ddl: string]> = [
   ['users', 'login_count', 'INTEGER DEFAULT 0'],
 ];
 
+
+/**
+ * Every column declared in BASE_SCHEMA, per table. A database that already has a table with the same name
+ * (older release, another project, a manual edit) is NOT touched by CREATE TABLE IF NOT EXISTS, so missing
+ * columns such as product_categories.image_url must be added explicitly.
+ */
+function declaredColumns(): Map<string, Array<{ name: string; ddl: string }>> {
+  const out = new Map<string, Array<{ name: string; ddl: string }>>();
+  const re = /CREATE TABLE IF NOT EXISTS (\w+) \(([\s\S]*?)\n  \);/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(BASE_SCHEMA))) {
+    const cols: Array<{ name: string; ddl: string }> = [];
+    for (const raw of m[2].split('\n')) {
+      const line = raw.trim().replace(/,$/, '');
+      if (!line || /^(FOREIGN|UNIQUE|PRIMARY|CONSTRAINT|CHECK)\b/i.test(line)) continue;
+      const c = /^(\w+)\s+(.+)$/.exec(line);
+      if (!c) continue;
+      // An added column must be nullable/defaulted so existing rows stay valid.
+      const ddl = c[2]
+        .replace(/PRIMARY KEY/gi, '')
+        .replace(/NOT NULL/gi, '')
+        .replace(/REFERENCES\s+\w+\s*\(\w+\)(\s+ON DELETE\s+(CASCADE|SET NULL))?/gi, '')
+        .replace(/\bUNIQUE\b/gi, '')
+        .replace(/CHECK\s*\(.*\)/gi, '')
+        .trim();
+      cols.push({ name: c[1], ddl: ddl || 'TEXT' });
+    }
+    out.set(m[1], cols);
+  }
+  return out;
+}
+
 const INDEXES = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users(phone) WHERE phone IS NOT NULL;
   CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google ON users(google_id) WHERE google_id IS NOT NULL;
@@ -530,6 +562,39 @@ function pgSchema(sql: string) {
   return sql.replace(/\bREAL\b/g, 'DOUBLE PRECISION');
 }
 
+
+/** Brings pre-existing tables in line with the declared schema. Each step is isolated: one failure never blocks start-up. */
+async function reconcilePostgresColumns(client: any) {
+  const attempt = async (label: string, sql: string) => {
+    await client.query('SAVEPOINT recon');
+    try {
+      await client.query(sql);
+      await client.query('RELEASE SAVEPOINT recon');
+    } catch (err: any) {
+      await client.query('ROLLBACK TO SAVEPOINT recon');
+      console.error(`[db] schema reconcile skipped (${label}):`, err?.message);
+    }
+  };
+  const declared = declaredColumns();
+  for (const [table, cols] of declared) {
+    for (const c of cols) {
+      await attempt(`${table}.${c.name}`, `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${c.name} ${pgSchema(c.ddl)}`);
+    }
+    // Leftover legacy columns that this app never writes must not block inserts.
+    const known = new Set(cols.map((c) => c.name));
+    const extra = await client.query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = $1 AND is_nullable = 'NO' AND column_default IS NULL`,
+      [table]
+    );
+    for (const r of extra.rows) {
+      if (!known.has(r.column_name) && r.column_name !== 'id') {
+        await attempt(`${table}.${r.column_name} drop not null`, `ALTER TABLE ${table} ALTER COLUMN ${r.column_name} DROP NOT NULL`);
+      }
+    }
+  }
+}
+
 async function initPostgres() {
   const p = await getPool();
   const existing = await p.query(`SELECT to_regclass('public.app_meta') AS t`);
@@ -547,6 +612,7 @@ async function initPostgres() {
     for (const [table, column, ddl] of ADDED_COLUMNS) {
       await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${ddl}`);
     }
+    await reconcilePostgresColumns(client);
     await client.query(INDEXES);
     // Supabase exposes `public` through its Data API. The app uses a direct server-side
     // connection (table owner, bypasses RLS), so lock the tables down for anon/authenticated roles.
@@ -574,6 +640,15 @@ async function initSqlite() {
     const cols = conn.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (!cols.some((c) => c.name === column)) {
       conn.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+    }
+  }
+  for (const [table, cols] of declaredColumns()) {
+    const have = new Set((conn.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name));
+    for (const c of cols) {
+      if (!have.has(c.name)) {
+        try { conn.exec(`ALTER TABLE ${table} ADD COLUMN ${c.name} ${c.ddl.replace(/DEFAULT\s+CURRENT_TIMESTAMP/i, '')}`); }
+        catch (err: any) { console.error(`[db] schema reconcile skipped (${table}.${c.name}):`, err?.message); }
+      }
     }
   }
   conn.exec(INDEXES);

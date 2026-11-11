@@ -28,6 +28,20 @@ import {
 export { authMiddleware, optionalAuthMiddleware, resolveBusinessId };
 export type { AuthUser };
 
+/** Safe error response for store APIs: log the real cause, never leak database internals to the browser. */
+function apiError(res: Response, err: any, fallback = 'Something went wrong on our side. Please try again.') {
+  if (err instanceof AccountError) return res.status(err.status).json({ error: err.message, code: err.code });
+  const msg = String(err?.message || '');
+  if (err?.code === '23505' || /UNIQUE constraint failed/i.test(msg)) {
+    return res.status(409).json({ error: 'That already exists. Please use a different name or value.', code: 'DUPLICATE' });
+  }
+  if (err?.code === '23503' || /FOREIGN KEY constraint failed/i.test(msg)) {
+    return res.status(409).json({ error: 'This item is linked to other records and cannot be changed this way.', code: 'IN_USE' });
+  }
+  console.error('[api] request failed:', msg || err);
+  return res.status(500).json({ error: fallback });
+}
+
 export const apiRouter = asyncRouter();
 
 apiRouter.use(authRouter);
@@ -208,7 +222,7 @@ apiRouter.get('/products', optionalAuthMiddleware, async (req: Request, res: Res
       },
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -341,7 +355,7 @@ apiRouter.post('/products', authMiddleware, async (req: Request, res: Response) 
     });
     res.status(201).json({ id: prodId, message: 'Product created successfully' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -396,7 +410,7 @@ apiRouter.put('/products/:id', authMiddleware, async (req: Request, res: Respons
 
     res.json({ message: 'Product updated successfully' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -412,7 +426,7 @@ apiRouter.delete('/products/:id', authMiddleware, async (req: Request, res: Resp
 
     res.json({ message: 'Product archived successfully' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -477,7 +491,7 @@ apiRouter.post('/products/bulk-csv', authMiddleware, async (req: Request, res: R
     });
     res.json({ message: `Successfully imported ${importedCount} products.`, importedCount });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -527,7 +541,7 @@ apiRouter.post('/categories', authMiddleware, async (req: Request, res: Response
 
     res.status(201).json({ id, name, slug });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -584,7 +598,7 @@ apiRouter.post('/products/:id/variants', authMiddleware, async (req: Request, re
 
     res.status(201).json({ id: varId, sku: varSku });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -624,6 +638,9 @@ apiRouter.put('/inventory/:id', authMiddleware, async (req: Request, res: Respon
     `).get(req.params.id, bizId) as any;
 
     if (!variant) return res.status(404).json({ error: 'Variant not found' });
+    if (!['PURCHASE', 'SALE', 'RETURN', 'ADJUSTMENT', 'CANCELLATION'].includes(String(movement_type))) {
+      return res.status(400).json({ error: 'Invalid stock movement type.' });
+    }
 
     let finalStock = variant.stock_quantity;
     let change = 0;
@@ -666,7 +683,7 @@ apiRouter.put('/inventory/:id', authMiddleware, async (req: Request, res: Respon
     });
     res.json({ message: 'Stock updated', variant_id: variant.id, new_stock: finalStock });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -727,7 +744,7 @@ apiRouter.post('/customers', authMiddleware, async (req: Request, res: Response)
 
     res.status(201).json({ id, name, phone });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -824,6 +841,7 @@ apiRouter.post('/orders', optionalAuthMiddleware, async (req: Request, res: Resp
 
     res.status(201).json(result);
   } catch (err: any) {
+    if (/relation|column|syntax|constraint|violates|SQLITE|connection/i.test(String(err?.message))) return apiError(res, err);
     res.status(400).json({ error: err.message });
   }
 });
@@ -906,8 +924,7 @@ apiRouter.put('/orders/:id/status', authMiddleware, async (req: Request, res: Re
 
     res.json({ message: 'Order status updated successfully' });
   } catch (err: any) {
-    if (err instanceof AccountError) return res.status(err.status).json({ error: err.message });
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -925,8 +942,7 @@ apiRouter.post('/orders/:id/cancel', authMiddleware, async (req: Request, res: R
     await cancelOrderAndRestock(order, bizId, 'Stock restored due to order cancellation');
     res.json({ message: `Order #${order.order_number} cancelled and inventory restored successfully.` });
   } catch (err: any) {
-    if (err instanceof AccountError) return res.status(err.status).json({ error: err.message });
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -1003,7 +1019,7 @@ apiRouter.post('/ai/chat', optionalAuthMiddleware, async (req: Request, res: Res
     });
   } catch (err: any) {
     console.error('Error in /api/ai/chat:', err);
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -1100,7 +1116,7 @@ apiRouter.post('/employees', authMiddleware, requireRole('BUSINESS_OWNER'), asyn
 
     res.status(201).json({ id, name, email, role: 'EMPLOYEE' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });
 
@@ -1272,6 +1288,6 @@ apiRouter.post('/webhooks/whatsapp', async (req: Request, res: Response) => {
       engine: aiRes.engine,
     });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    return apiError(res, err);
   }
 });

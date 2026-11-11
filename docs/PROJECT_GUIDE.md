@@ -388,5 +388,6 @@ Real Google sign-in can only be tested on a deployed (or `localhost`) origin tha
 | Super Admin overview page empty but Vercel logs show `[superadmin] overview section ...` | Same, in the server log | Fix the named query/table in Supabase |
 | "Something went wrong on our side" on any page | Unhandled server error | Vercel → project → Logs, search `[api] unhandled error` |
 | Error mentions a missing column, e.g. `column "image_url" ... does not exist` | The database already had older/other tables with the same names | Fixed in the code: on start-up the app adds every missing column and relaxes stray NOT NULL legacy columns (versioned, runs once per release). Redeploy; check Vercel logs for `[db] schema reconcile skipped` if anything still fails |
+| Not sure the database matches the code | — | Open `https://<your-site>/api/health/schema`: `"ok": true` and an empty `missing` list means every expected column exists |
 | Changes to env vars have no effect | Not redeployed | Vercel → Deployments → Redeploy |
 | `npm run test:api` refuses to run | `DATABASE_URL` is set in your shell | `unset DATABASE_URL` |
