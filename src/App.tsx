@@ -21,6 +21,7 @@ import { AnalyticsPage } from './pages/AnalyticsPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { CustomerShoppingPage } from './pages/CustomerShoppingPage';
+import { LegalPage } from './pages/LegalPages';
 import { AppAssistantPage } from './pages/AppAssistantPage';
 import { Order } from './types';
 
@@ -46,10 +47,14 @@ const VIEW_PATHS: Record<string, string> = {
   analytics: '/analytics',
   integrations: '/integrations',
   settings: '/settings',
+  privacy: '/privacy',
+  terms: '/terms',
+  data_deletion: '/data-deletion',
 };
 const PATH_VIEWS: Record<string, string> = Object.fromEntries(Object.entries(VIEW_PATHS).map(([v, p]) => [p, v]));
 const AUTH_SCREENS = ['login', 'register', 'forgot_password'];
-const OPEN_VIEWS = ['landing', 'shopping', ...AUTH_SCREENS]; // everything else needs a signed-in user
+const LEGAL_VIEWS = ['privacy', 'terms', 'data_deletion'];
+const OPEN_VIEWS = ['landing', 'shopping', ...LEGAL_VIEWS, ...AUTH_SCREENS]; // everything else needs a signed-in user
 
 const viewFromPath = (pathname: string) => PATH_VIEWS[pathname.replace(/\/+$/, '') || '/'] ?? 'landing';
 
@@ -140,7 +145,7 @@ function MainApp() {
     navigateTo('orders');
   };
 
-  const isPublicPage = ['landing', 'login', 'register', 'forgot_password'].includes(currentView);
+  const isPublicPage = ['landing', 'login', 'register', 'forgot_password', ...LEGAL_VIEWS].includes(currentView);
   const isShoppingAssistant = currentView === 'shopping';
 
   return (
@@ -256,6 +261,8 @@ function MainApp() {
           {shownView === 'integrations' && <IntegrationsPage onBack={goBack} />}
 
           {shownView === 'settings' && <SettingsPage onBack={goBack} />}
+
+          {(shownView === 'privacy' || shownView === 'terms' || shownView === 'data_deletion') && <LegalPage kind={shownView} />}
 
         </main>
       </div>

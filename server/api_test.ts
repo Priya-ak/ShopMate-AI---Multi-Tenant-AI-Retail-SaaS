@@ -274,8 +274,9 @@ console.log('# WhatsApp: connect (coexistence), signed webhook, echoes, history,
       graphCalls.push({ method: rq.method, path: u.pathname, auth: rq.headers.authorization, body });
       const send = (st: number, j: any) => { rs.statusCode = st; rs.setHeader('content-type', 'application/json'); rs.end(JSON.stringify(j)); };
       if (u.pathname.endsWith('/oauth/access_token')) return send(u.searchParams.get('code') === 'GOOD_CODE_1234567890' ? 200 : 400, u.searchParams.get('code') === 'GOOD_CODE_1234567890' ? { access_token: 'TOKEN_SECRET_ABC' } : { error: { message: 'bad code', code: 100 } });
-      if (rq.headers.authorization !== 'Bearer TOKEN_SECRET_ABC') return send(401, { error: { code: 190, message: 'invalid token' } });
+      if (!['Bearer TOKEN_SECRET_ABC', 'Bearer SYSTEM_USER_TOKEN_LONG_ENOUGH_1234'].includes(String(rq.headers.authorization))) return send(401, { error: { code: 190, message: 'invalid token' } });
       if (rq.method === 'GET' && /\/\d+$/.test(u.pathname)) return send(200, { display_phone_number: '+91 98765 43210', verified_name: 'Ravi Textiles' });
+      if (rq.method === 'GET' && u.pathname.endsWith('/999888777/phone_numbers')) return send(200, { data: [{ id: '111222333' }] });
       if (u.pathname.endsWith('/messages')) { sent.push(body); return send(200, { messages: [{ id: 'wamid.OUT' + sent.length }] }); }
       return send(200, { success: true });
     });
@@ -413,6 +414,19 @@ console.log('# WhatsApp: connect (coexistence), signed webhook, echoes, history,
   r = await call('GET', '/whatsapp/status', undefined, ownerToken); ok(r.j.connected === false && r.j.account === null, 'status after disconnect', r.j);
   r = await hook(inbound('wamid.Z1', 'after disconnect', '919000055555')); ok(r.s === 200 && !(await convFor('919000055555')), 'webhooks after disconnect are ignored', r);
   ok(((await db.prepare('SELECT COUNT(*) as n FROM audit_logs WHERE action LIKE ?').get('whatsapp.%')) as any).n >= 3, 'connect/disconnect/auto-reply are audited');
+  // Manual connection (works before Meta approves the platform app)
+  const goodManual = { phone_number_id: '111222333', waba_id: '999888777', access_token: 'SYSTEM_USER_TOKEN_LONG_ENOUGH_1234' };
+  r = await call('POST', '/whatsapp/connect-manual', goodManual, empTok); ok(r.s === 403, 'employee cannot connect manually', r.s);
+  r = await call('POST', '/whatsapp/connect-manual', { ...goodManual, access_token: 'short' }, ownerToken); ok(r.s === 400, 'manual connect validates the token field', r);
+  r = await call('POST', '/whatsapp/connect-manual', { ...goodManual, phone_number_id: 'abc' }, ownerToken); ok(r.s === 400, 'manual connect validates ids', r);
+  r = await call('POST', '/whatsapp/connect-manual', { ...goodManual, access_token: 'WRONG_TOKEN_THAT_IS_LONG_ENOUGH' }, ownerToken); ok(r.s >= 400 && !JSON.stringify(r.j).includes('invalid token'), 'wrong token rejected, Meta text not leaked', r);
+  r = await call('POST', '/whatsapp/connect-manual', { ...goodManual, waba_id: '555666777' }, ownerToken); ok(r.s >= 400, 'phone must belong to the given WABA', r);
+  r = await call('POST', '/whatsapp/connect-manual', goodManual, ownerToken);
+  ok(r.s === 201 && r.j.connected === true && r.j.account.display_phone === '+91 98765 43210' && !JSON.stringify(r.j).includes('SYSTEM_USER_TOKEN'), 'owner connects manually; token never returned', r);
+  const manualRow = (await db.prepare('SELECT access_token_enc, mode, auto_reply FROM whatsapp_accounts WHERE phone_number_id = ?').get('111222333')) as any;
+  ok(manualRow && manualRow.mode === 'MANUAL' && manualRow.auto_reply == 1 && !manualRow.access_token_enc.includes('SYSTEM_USER_TOKEN'), 'manual token stored encrypted, auto-reply on', manualRow);
+  r = await call('POST', '/whatsapp/connect-manual', goodManual, o3tok); ok(r.s === 409 && r.j.code === 'ALREADY_CONNECTED', 'another store cannot claim the same number manually', r);
+  r = await call('DELETE', '/whatsapp/connection', undefined, ownerToken); ok(r.s === 200, 'manual connection can be disconnected', r);
   mock.close();
 }
 

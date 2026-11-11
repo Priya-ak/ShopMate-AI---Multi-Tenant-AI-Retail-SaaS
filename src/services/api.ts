@@ -3,7 +3,7 @@ import { Product, ProductCategory, Order, Customer, Conversation, Message, Inven
 const API_BASE = '/api';
 
 export interface WhatsAppStatus {
-  platform: { connectAvailable: boolean; webhookReady: boolean; appId: string | null; configId: string | null; graphVersion: string };
+  platform: { manualAvailable: boolean; connectAvailable: boolean; webhookReady: boolean; appId: string | null; configId: string | null; graphVersion: string };
   connected: boolean;
   account: null | { display_phone: string | null; verified_name: string | null; mode: string; status: string; auto_reply: boolean; history_status: string | null; last_webhook_at: string | null; connected_at: string };
 }
@@ -460,6 +460,10 @@ export const api = {
 
   async connectWhatsApp(data: { code: string; phone_number_id: string; waba_id: string }) {
     return jsonOrThrow(await fetch(`${API_BASE}/whatsapp/connect`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(data) }), 'Failed to connect WhatsApp');
+  },
+
+  async connectWhatsAppManual(data: { phone_number_id: string; waba_id: string; access_token: string }) {
+    return jsonOrThrow(await fetch(`${API_BASE}/whatsapp/connect-manual`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(data) }), 'Failed to connect WhatsApp');
   },
 
   async disconnectWhatsApp() {

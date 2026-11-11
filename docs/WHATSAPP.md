@@ -84,3 +84,12 @@ This was built and tested against simulated Meta payloads and a mock Graph API, 
 | Webhook returns 401 | `META_APP_SECRET` matches the app that sends the events; see "body source" log line |
 | Messages not appearing | Webhook fields subscribed; the number's store is connected; `last message received` on the page |
 | "access has expired" | The owner disconnects and reconnects WhatsApp |
+
+## Manual connection (no Meta approval needed)
+
+`POST /api/whatsapp/connect-manual` (store owner only) takes `phone_number_id`, `waba_id` and `access_token`
+(a System User token from the owner's own Meta app). The server checks the token can read the phone number,
+checks the number belongs to the WABA, subscribes the app to the WABA, then stores the token encrypted
+(`mode = MANUAL`). Auto-reply, replies from ShopMate and disconnect work as in the one-click flow.
+Not available in manual mode: chat-history import and mirroring to the WhatsApp Business app.
+See `docs/META_APP_REVIEW.md` for the steps that unlock the one-click flow for every shop.

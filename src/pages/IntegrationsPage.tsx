@@ -56,6 +56,11 @@ export const IntegrationsPage: React.FC<IntegrationsPageProps> = () => {
   const [testResponse, setTestResponse] = useState<any>(null);
   const [isTesting, setIsTesting] = useState(false);
 
+  const [showManual, setShowManual] = useState(false);
+  const [manual, setManual] = useState({ phone_number_id: '', waba_id: '', access_token: '' });
+  const [manualBusy, setManualBusy] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+
   const signup = useRef<{ code?: string; phone_number_id?: string; waba_id?: string; done?: boolean }>({});
 
   const load = useCallback(async () => {
@@ -158,6 +163,27 @@ export const IntegrationsPage: React.FC<IntegrationsPageProps> = () => {
     }
   };
 
+  const handleManualConnect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setManualBusy(true);
+    setManualError(null);
+    try {
+      await api.connectWhatsAppManual({
+        phone_number_id: manual.phone_number_id.trim(),
+        waba_id: manual.waba_id.trim(),
+        access_token: manual.access_token.trim(),
+      });
+      setManual({ phone_number_id: '', waba_id: '', access_token: '' }); // never keep the token in the page
+      setShowManual(false);
+      setNotice('WhatsApp connected. Send a message to your number from another phone to test the AI reply.');
+      await load();
+    } catch (err: any) {
+      setManualError(err.message || 'Could not connect WhatsApp');
+    } finally {
+      setManualBusy(false);
+    }
+  };
+
   const handleToggleAuto = async () => {
     if (!status?.account) return;
     setTogglingAuto(true);
@@ -244,7 +270,7 @@ export const IntegrationsPage: React.FC<IntegrationsPageProps> = () => {
                 <dt className="text-slate-400">Business name</dt>
                 <dd className="text-white">{acc.verified_name || business?.name || '—'}</dd>
                 <dt className="text-slate-400">Mode</dt>
-                <dd className="text-white">Phone app + ShopMate (coexistence)</dd>
+                <dd className="text-white">{acc.mode === 'MANUAL' ? 'API only (manual connection)' : 'Phone app + ShopMate (coexistence)'}</dd>
                 <dt className="text-slate-400">Old chats import</dt>
                 <dd className="text-white capitalize">{(acc.history_status || 'waiting for Meta').replace('_', ' ')}</dd>
                 <dt className="text-slate-400">Last message received</dt>
@@ -311,6 +337,60 @@ export const IntegrationsPage: React.FC<IntegrationsPageProps> = () => {
                 </button>
               ) : (
                 <p className="text-slate-400">Ask the store owner to connect WhatsApp.</p>
+              )}
+
+              {isOwner && (
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowManual((v) => !v)}
+                    className="text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2"
+                  >
+                    {showManual ? 'Hide manual setup' : 'One-click sign-up not available? Connect manually'}
+                  </button>
+                  {showManual && (
+                    <form onSubmit={handleManualConnect} className="mt-3 space-y-2.5 p-4 rounded-xl bg-slate-950/60 border border-slate-800">
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        Copy these three values from your own Meta app: <b className="text-slate-200">WhatsApp → API Setup</b> shows the Phone number ID and WhatsApp Business Account ID. Create a permanent token under <b className="text-slate-200">Business settings → System users</b> with the whatsapp_business_messaging and whatsapp_business_management permissions. Manual mode does not copy old chats and the phone app does not mirror messages; use it for testing or until one-click sign-up is approved.
+                      </p>
+                      {(['phone_number_id', 'waba_id'] as const).map((k) => (
+                        <label key={k} className="block">
+                          <span className="text-[11px] text-slate-400">{k === 'phone_number_id' ? 'Phone number ID' : 'WhatsApp Business Account ID'}</span>
+                          <input
+                            value={manual[k]}
+                            onChange={(e) => setManual({ ...manual, [k]: e.target.value.replace(/\D/g, '') })}
+                            inputMode="numeric" required maxLength={30} autoComplete="off"
+                            className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:outline-none focus:border-emerald-500"
+                          />
+                        </label>
+                      ))}
+                      <label className="block">
+                        <span className="text-[11px] text-slate-400">Access token</span>
+                        <input
+                          type="password" value={manual.access_token}
+                          onChange={(e) => setManual({ ...manual, access_token: e.target.value })}
+                          required maxLength={1000} autoComplete="off" spellCheck={false}
+                          className="mt-1 w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono text-xs focus:outline-none focus:border-emerald-500"
+                        />
+                      </label>
+                      {manualError && (
+                        <div className="p-2.5 rounded-lg bg-rose-950/70 border border-rose-800 text-rose-200 text-[11px] flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 shrink-0" /><span>{manualError}</span>
+                        </div>
+                      )}
+                      {!status.platform.manualAvailable && (
+                        <p className="text-[11px] text-amber-300">The platform webhook is not configured yet, so replies cannot be received.</p>
+                      )}
+                      <button
+                        type="submit" disabled={manualBusy || !status.platform.manualAvailable}
+                        className="w-full py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        {manualBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+                        <span>{manualBusy ? 'Checking with Meta...' : 'Verify and connect'}</span>
+                      </button>
+                    </form>
+                  )}
+                </div>
               )}
             </div>
           )}

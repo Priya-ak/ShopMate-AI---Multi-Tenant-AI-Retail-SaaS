@@ -389,6 +389,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <button onClick={onStartShopping} className="hover:text-white transition">AI Assistant</button>
             <button onClick={onOpenLogin} className="hover:text-white transition">Store Login</button>
             <button onClick={onOpenRegister} className="hover:text-white transition">Register Shop</button>
+            <a href="/privacy" className="hover:text-white transition">Privacy</a>
+            <a href="/terms" className="hover:text-white transition">Terms</a>
+            <a href="/data-deletion" className="hover:text-white transition">Data deletion</a>
           </div>
 
           <div className="text-slate-500 text-center md:text-right">

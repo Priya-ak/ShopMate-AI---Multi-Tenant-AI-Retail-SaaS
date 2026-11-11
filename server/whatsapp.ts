@@ -434,7 +434,7 @@ whatsappRouter.get('/whatsapp/status', authMiddleware, staff, async (req: Reques
   const cfg = metaConfig();
   const acc = await getAccount(bizId);
   res.json({
-    platform: { connectAvailable: cfg.ready, webhookReady: cfg.webhookReady, appId: cfg.ready ? cfg.appId : null, configId: cfg.ready ? cfg.configId : null, graphVersion: cfg.graphVersion },
+    platform: { manualAvailable: cfg.webhookReady, connectAvailable: cfg.ready, webhookReady: cfg.webhookReady, appId: cfg.ready ? cfg.appId : null, configId: cfg.ready ? cfg.configId : null, graphVersion: cfg.graphVersion },
     connected: !!acc && acc.status === 'Connected',
     account: acc ? publicAccount(acc) : null,
   });
@@ -484,6 +484,49 @@ whatsappRouter.post('/whatsapp/connect', authMiddleware, ownerOnly, async (req: 
     await db.prepare('UPDATE whatsapp_accounts SET history_status = ? WHERE business_id = ?').run(history, bizId);
 
     await audit(bizId, u.id, 'whatsapp.connect', 'whatsapp_account', phoneId, { waba_id: wabaId });
+    const fresh = (await getAccount(bizId))!;
+    res.status(201).json({ connected: true, account: publicAccount(fresh) });
+  } catch (err) {
+    if (isDuplicate(err)) return res.status(409).json({ error: 'This WhatsApp number is already connected to another store.', code: 'ALREADY_CONNECTED' });
+    return waErr(res, err);
+  }
+});
+
+// Manual connection: the owner pastes the IDs and a System User token from their OWN Meta developer app.
+// Works while the platform app is not yet an approved Tech Provider. The token is verified against Meta, then stored encrypted.
+whatsappRouter.post('/whatsapp/connect-manual', authMiddleware, ownerOnly, async (req: Request, res: Response) => {
+  try {
+    const u = user(req);
+    if (!rateLimit(`wa-connect:${u.id}`, 10, 10 * 60 * 1000).ok) throw new WhatsAppError(429, 'Too many attempts. Please wait a few minutes.', 'RATE_LIMITED');
+    const bizId = await resolveBusinessId(req);
+    const { phone_number_id: phoneId, waba_id: wabaId } = req.body || {};
+    const accessToken = typeof req.body?.access_token === 'string' ? req.body.access_token.trim() : '';
+    if (!idOk(phoneId) || !idOk(wabaId) || accessToken.length < 20 || accessToken.length > 1000 || /\s/.test(accessToken)) {
+      throw new WhatsAppError(400, 'Enter the Phone Number ID, the WhatsApp Business Account ID and the access token exactly as shown in Meta.', 'BAD_REQUEST');
+    }
+    const taken = (await db.prepare('SELECT business_id FROM whatsapp_accounts WHERE phone_number_id = ?').get(phoneId)) as any;
+    if (taken && taken.business_id !== bizId) throw new WhatsAppError(409, 'This WhatsApp number is already connected to another store.', 'ALREADY_CONNECTED');
+
+    // 1. The token must be able to read this phone number...
+    const phone = await graph(phoneId, { token: accessToken, query: { fields: 'display_phone_number,verified_name' } });
+    // 2. ...and that number must belong to the WABA given (stops mixing IDs from different accounts).
+    const list = await graph(`${wabaId}/phone_numbers`, { token: accessToken, query: { fields: 'id', limit: '50' } });
+    if (!Array.isArray(list?.data) || !list.data.some((p: any) => String(p?.id) === phoneId)) {
+      throw new WhatsAppError(400, 'That Phone Number ID does not belong to this WhatsApp Business Account ID.', 'BAD_REQUEST');
+    }
+    // 3. Deliver this account's webhooks to the platform app.
+    await graph(`${wabaId}/subscribed_apps`, { method: 'POST', token: accessToken });
+
+    const enc = encryptSecret(accessToken);
+    const existing = await getAccount(bizId);
+    if (existing) {
+      await db.prepare(`UPDATE whatsapp_accounts SET waba_id=?, phone_number_id=?, display_phone=?, verified_name=?, access_token_enc=?, mode='MANUAL', status='Connected', history_status=NULL, connected_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .run(wabaId, phoneId, phone?.display_phone_number || null, phone?.verified_name || null, enc, u.id, existing.id);
+    } else {
+      await db.prepare(`INSERT INTO whatsapp_accounts (id, business_id, waba_id, phone_number_id, display_phone, verified_name, access_token_enc, mode, status, auto_reply, connected_by) VALUES (?, ?, ?, ?, ?, ?, ?, 'MANUAL', 'Connected', 1, ?)`)
+        .run(newId('wa'), bizId, wabaId, phoneId, phone?.display_phone_number || null, phone?.verified_name || null, enc, u.id);
+    }
+    await audit(bizId, u.id, 'whatsapp.connect_manual', 'whatsapp_account', phoneId, { waba_id: wabaId });
     const fresh = (await getAccount(bizId))!;
     res.status(201).json({ connected: true, account: publicAccount(fresh) });
   } catch (err) {
