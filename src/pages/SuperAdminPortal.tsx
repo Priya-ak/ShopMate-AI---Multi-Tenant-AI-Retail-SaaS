@@ -202,6 +202,14 @@ const Overview: React.FC<{ includeDemo: boolean; onAuthError: () => void }> = ({
 
   return (
     <div className="space-y-6">
+      {Array.isArray(data.warnings) && data.warnings.length > 0 && (
+        <div role="alert" className="p-3.5 rounded-xl bg-amber-950/60 border border-amber-800 text-amber-200 text-xs space-y-1">
+          <div className="font-semibold flex items-center gap-2"><AlertCircle className="w-4 h-4 text-amber-400" />Some figures could not be loaded</div>
+          {data.warnings.map((w: any) => (
+            <div key={w.section} className="font-mono text-[11px] text-amber-300/90">{w.section}: {w.message}</div>
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi label="Active now" value={fmtNum(activity.activeNow)} hint="seen in the last 15 minutes" accent="text-emerald-400" />
         <Kpi label="Logins today" value={fmtNum(activity.loginsToday)} hint={`${fmtNum(activity.logins7d)} in 7 days`} />

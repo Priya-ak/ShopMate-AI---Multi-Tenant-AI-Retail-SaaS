@@ -23,7 +23,8 @@ async function parse(res: Response, fallback: string) {
       // On the sign-in call itself a 401 just means "wrong credentials"; elsewhere it means the session ended.
       throw new SuperAdminAuthError((body as any).error || fallback);
     }
-    throw new Error((body as any).error || fallback);
+    const b = body as any;
+    throw new Error(b.detail ? `${b.error || fallback} (${b.detail})` : b.error || fallback);
   }
   return body as any;
 }

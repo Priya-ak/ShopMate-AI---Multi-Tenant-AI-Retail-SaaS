@@ -39,8 +39,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     setErrorMsg(null);
     setIsLoading(true);
     try {
-      const u = await googleAuth({ credential, mode: 'login' });
-      onSuccess(u);
+      // Existing account -> signed in. New Google user -> continue to the registration details step.
+      const u = await googleAuth({ credential, mode: 'register' });
+      if (u) onSuccess(u);
+      else onGoToRegister();
     } catch (err: any) {
       setErrorMsg(err.message || 'Google sign-in failed');
     } finally {

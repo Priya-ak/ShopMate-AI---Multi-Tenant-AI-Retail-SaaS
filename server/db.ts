@@ -121,9 +121,12 @@ async function getSqlite() {
     );
   }
   const { DatabaseSync } = await import('node:sqlite');
-  const dir = path.resolve(process.cwd(), 'data');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  sqlite = new DatabaseSync(path.join(dir, 'shopmate.db'));
+  // SQLITE_PATH lets automated tests use a throw-away database file; default is unchanged.
+  const file = process.env.SQLITE_PATH
+    ? path.resolve(process.env.SQLITE_PATH)
+    : path.join(path.resolve(process.cwd(), 'data'), 'shopmate.db');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  sqlite = new DatabaseSync(file);
   sqlite.exec('PRAGMA foreign_keys = ON;');
   return sqlite;
 }

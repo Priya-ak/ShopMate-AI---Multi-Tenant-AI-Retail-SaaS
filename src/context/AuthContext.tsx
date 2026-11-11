@@ -10,11 +10,20 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, pass: string) => Promise<User>;
   register: (data: any) => Promise<User>;
-  googleAuth: (params: Parameters<typeof api.googleAuth>[0]) => Promise<User>;
+  /** Resolves to the signed-in user, or null when Google verified the person but business details are still needed. */
+  googleAuth: (params: Parameters<typeof api.googleAuth>[0]) => Promise<User | null>;
+  /** A verified Google identity waiting for the business details step of registration. */
+  pendingGoogle: PendingGoogle | null;
+  clearPendingGoogle: () => void;
   refreshBusiness: () => Promise<void>;
   logout: () => void;
   switchDemoRole: (role: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'SUPER_ADMIN' | 'BIZ_2') => Promise<User>;
   setCurrentBusinessId: (id: string) => void;
+}
+
+export interface PendingGoogle {
+  credential: string;
+  profile: { name: string; email: string; picture?: string | null };
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -27,6 +36,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.getItem('shopmate_current_biz_id') || ''
   );
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [pendingGoogle, setPendingGoogle] = useState<PendingGoogle | null>(null);
 
   const setCurrentBusinessId = (id: string) => {
     setCurrentBizId(id);
@@ -90,10 +100,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const googleAuth = async (params: Parameters<typeof api.googleAuth>[0]): Promise<User> => {
+  const googleAuth = async (params: Parameters<typeof api.googleAuth>[0]): Promise<User | null> => {
     setIsLoading(true);
     try {
       const res = await api.googleAuth(params);
+      if (res.needsProfile) {
+        setPendingGoogle({ credential: params.credential, profile: res.profile });
+        return null;
+      }
+      setPendingGoogle(null);
       setUser(res.user);
       setToken(res.token);
       localStorage.setItem('shopmate_token', res.token);
@@ -155,6 +170,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         register,
         googleAuth,
+        pendingGoogle,
+        clearPendingGoogle: () => setPendingGoogle(null),
         refreshBusiness,
         logout,
         switchDemoRole,

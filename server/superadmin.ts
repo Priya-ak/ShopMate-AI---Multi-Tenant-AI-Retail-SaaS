@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import { asyncRouter } from './asyncRouter.js';
 import { db } from './db.js';
 import {
@@ -60,24 +60,24 @@ superAdminRouter.use(authMiddleware, requireRealSuperAdmin);
 // SQL fragments that hide the sandbox/demo data unless asked for.
 const loginDemoFilter = (demo: boolean) => (demo ? '' : "AND e.method <> 'demo' AND COALESCE(u.is_demo, 0) = 0");
 
+/** Runs one dashboard query; a failure degrades that card instead of breaking the whole page. */
+async function section<T>(name: string, warnings: { section: string; message: string }[], fallback: T, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err: any) {
+    console.error(`[superadmin] overview section "${name}" failed:`, err?.message || err);
+    warnings.push({ section: name, message: String(err?.message || err).slice(0, 240) });
+    return fallback;
+  }
+}
+
 superAdminRouter.get('/overview', async (req: Request, res: Response) => {
   const demo = includeDemo(req);
   const uDemo = demo ? '' : 'AND COALESCE(u.is_demo, 0) = 0';
   const bDemo = demo ? '' : 'AND COALESCE(b.is_demo, 0) = 0';
   const ld = loginDemoFilter(demo);
   const since = (days: number) => ts(days * DAY);
-
-  const roles = await db.prepare(`SELECT u.role AS role, COUNT(*) AS n FROM users u WHERE 1=1 ${uDemo} GROUP BY u.role`).all();
-  const roleCount = (r: string) => num(roles.find((x: any) => x.role === r)?.n);
-
-  const businesses = await db.prepare(`SELECT COUNT(*) AS n FROM businesses b WHERE 1=1 ${bDemo}`).get();
-  const buyers = await db.prepare(
-    `SELECT COUNT(*) AS n FROM customers c JOIN businesses b ON b.id = c.business_id WHERE 1=1 ${bDemo}`
-  ).get();
-  const orders = await db.prepare(
-    `SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN o.order_status <> 'Cancelled' THEN o.total_amount ELSE 0 END), 0) AS revenue
-       FROM orders o JOIN businesses b ON b.id = o.business_id WHERE 1=1 ${bDemo}`
-  ).get();
+  const warnings: { section: string; message: string }[] = [];
 
   const loginCount = async (cutoff?: string) =>
     num((await db.prepare(
@@ -85,64 +85,74 @@ superAdminRouter.get('/overview', async (req: Request, res: Response) => {
         WHERE e.success = 1 AND e.method <> 'register' ${ld} ${cutoff ? 'AND e.created_at >= ?' : ''}`
     ).get(...(cutoff ? [cutoff] : [])))?.n);
 
-  const uniq7 = await db.prepare(
-    `SELECT COUNT(DISTINCT e.user_id) AS n FROM login_events e LEFT JOIN users u ON u.id = e.user_id
-      WHERE e.success = 1 AND e.user_id IS NOT NULL AND e.method <> 'register' AND e.created_at >= ? ${ld}`
-  ).get(since(7));
-  const activeNow = await db.prepare(
-    `SELECT COUNT(*) AS n FROM users u WHERE u.last_seen_at >= ? ${uDemo}`
-  ).get(ts(15 * 60 * 1000));
-  const failed24 = await db.prepare(
-    `SELECT COUNT(*) AS n FROM login_events e LEFT JOIN users u ON u.id = e.user_id
-      WHERE e.success = 0 AND e.created_at >= ? ${ld}`
-  ).get(ts(DAY));
-  const demoVisits = await db.prepare(`SELECT COUNT(*) AS n FROM login_events WHERE method = 'demo' AND success = 1`).get();
+  // Independent queries run together (the database may be far from the serverless region).
+  const [roles, businesses, buyers, orders, activity, loginsByDay, signupsByDay, byMethod, topBusinesses] = await Promise.all([
+    section('users', warnings, [] as any[], () =>
+      db.prepare(`SELECT u.role AS role, COUNT(*) AS n FROM users u WHERE 1=1 ${uDemo} GROUP BY u.role`).all()),
+    section('businesses', warnings, 0, async () =>
+      num((await db.prepare(`SELECT COUNT(*) AS n FROM businesses b WHERE 1=1 ${bDemo}`).get())?.n)),
+    section('buyers', warnings, 0, async () =>
+      num((await db.prepare(`SELECT COUNT(*) AS n FROM customers c JOIN businesses b ON b.id = c.business_id WHERE 1=1 ${bDemo}`).get())?.n)),
+    section('orders', warnings, { n: 0, revenue: 0 }, async () => {
+      const r = await db.prepare(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN o.order_status <> 'Cancelled' THEN o.total_amount ELSE 0 END), 0) AS revenue
+           FROM orders o JOIN businesses b ON b.id = o.business_id WHERE 1=1 ${bDemo}`
+      ).get();
+      return { n: num(r?.n), revenue: num(r?.revenue) };
+    }),
+    section('login activity', warnings, { loginsToday: 0, logins7d: 0, logins30d: 0, loginsAllTime: 0, uniqueUsers7d: 0, activeNow: 0, failed24h: 0, demoVisits: 0 }, async () => {
+      const [loginsToday, logins7d, logins30d, loginsAllTime] = await Promise.all([loginCount(ts(DAY)), loginCount(since(7)), loginCount(since(30)), loginCount()]);
+      const uniq7 = await db.prepare(
+        `SELECT COUNT(DISTINCT e.user_id) AS n FROM login_events e LEFT JOIN users u ON u.id = e.user_id
+          WHERE e.success = 1 AND e.user_id IS NOT NULL AND e.method <> 'register' AND e.created_at >= ? ${ld}`
+      ).get(since(7));
+      const activeNow = await db.prepare(`SELECT COUNT(*) AS n FROM users u WHERE u.last_seen_at >= ? ${uDemo}`).get(ts(15 * 60 * 1000));
+      const failed24 = await db.prepare(
+        `SELECT COUNT(*) AS n FROM login_events e LEFT JOIN users u ON u.id = e.user_id
+          WHERE e.success = 0 AND e.created_at >= ? ${ld}`
+      ).get(ts(DAY));
+      const demoVisits = await db.prepare(`SELECT COUNT(*) AS n FROM login_events WHERE method = 'demo' AND success = 1`).get();
+      return { loginsToday, logins7d, logins30d, loginsAllTime, uniqueUsers7d: num(uniq7?.n), activeNow: num(activeNow?.n), failed24h: num(failed24?.n), demoVisits: num(demoVisits?.n) };
+    }),
+    section('logins by day', warnings, [] as any[], () => db.prepare(
+      `SELECT substr(e.created_at, 1, 10) AS day, COUNT(*) AS logins, COUNT(DISTINCT e.user_id) AS users
+         FROM login_events e LEFT JOIN users u ON u.id = e.user_id
+        WHERE e.success = 1 AND e.method <> 'register' AND e.created_at >= ? ${ld}
+        GROUP BY substr(e.created_at, 1, 10) ORDER BY substr(e.created_at, 1, 10)`
+    ).all(since(13))),
+    section('registrations by day', warnings, [] as any[], () => db.prepare(
+      `SELECT substr(u.created_at, 1, 10) AS day, COUNT(*) AS n FROM users u
+        WHERE u.created_at >= ? AND u.role <> 'SUPER_ADMIN' ${uDemo}
+        GROUP BY substr(u.created_at, 1, 10) ORDER BY substr(u.created_at, 1, 10)`
+    ).all(since(13))),
+    section('sign-in methods', warnings, [] as any[], () => db.prepare(
+      `SELECT e.method AS method, COUNT(*) AS n FROM login_events e LEFT JOIN users u ON u.id = e.user_id
+        WHERE e.success = 1 ${ld} GROUP BY e.method ORDER BY COUNT(*) DESC`
+    ).all()),
+    section('top businesses', warnings, [] as any[], () => db.prepare(
+      `SELECT b.id, b.name, b.category,
+              (SELECT COUNT(*) FROM orders o WHERE o.business_id = b.id) AS orders,
+              (SELECT COALESCE(SUM(o.total_amount), 0) FROM orders o WHERE o.business_id = b.id AND o.order_status <> 'Cancelled') AS revenue
+         FROM businesses b WHERE 1=1 ${bDemo} ORDER BY 5 DESC, b.created_at DESC LIMIT 5`
+    ).all()),
+  ]);
 
-  const loginsByDay = await db.prepare(
-    `SELECT substr(e.created_at, 1, 10) AS day, COUNT(*) AS logins, COUNT(DISTINCT e.user_id) AS users
-       FROM login_events e LEFT JOIN users u ON u.id = e.user_id
-      WHERE e.success = 1 AND e.method <> 'register' AND e.created_at >= ? ${ld}
-      GROUP BY substr(e.created_at, 1, 10) ORDER BY day`
-  ).all(since(13));
-  const signupsByDay = await db.prepare(
-    `SELECT substr(u.created_at, 1, 10) AS day, COUNT(*) AS n FROM users u
-      WHERE u.created_at >= ? AND u.role <> 'SUPER_ADMIN' ${uDemo}
-      GROUP BY substr(u.created_at, 1, 10) ORDER BY day`
-  ).all(since(13));
-  const byMethod = await db.prepare(
-    `SELECT e.method AS method, COUNT(*) AS n FROM login_events e LEFT JOIN users u ON u.id = e.user_id
-      WHERE e.success = 1 ${ld} GROUP BY e.method ORDER BY n DESC`
-  ).all();
-
-  const topBusinesses = await db.prepare(
-    `SELECT b.id, b.name, b.category,
-            (SELECT COUNT(*) FROM orders o WHERE o.business_id = b.id) AS orders,
-            (SELECT COALESCE(SUM(o.total_amount), 0) FROM orders o WHERE o.business_id = b.id AND o.order_status <> 'Cancelled') AS revenue
-       FROM businesses b WHERE 1=1 ${bDemo} ORDER BY revenue DESC, b.created_at DESC LIMIT 5`
-  ).all();
+  const roleCount = (r: string) => num(roles.find((x: any) => x.role === r)?.n);
 
   res.json({
     includeDemo: demo,
+    warnings,
     totals: {
       users: roleCount('BUSINESS_OWNER') + roleCount('EMPLOYEE') + roleCount('CUSTOMER') + roleCount('SUPER_ADMIN'),
       owners: roleCount('BUSINESS_OWNER'),
       employees: roleCount('EMPLOYEE'),
       customerAccounts: roleCount('CUSTOMER'),
-      businesses: num(businesses?.n),
-      buyers: num(buyers?.n),
-      orders: num(orders?.n),
-      revenue: num(orders?.revenue),
+      businesses,
+      buyers,
+      orders: orders.n,
+      revenue: orders.revenue,
     },
-    activity: {
-      loginsToday: await loginCount(ts(DAY)),
-      logins7d: await loginCount(since(7)),
-      logins30d: await loginCount(since(30)),
-      loginsAllTime: await loginCount(),
-      uniqueUsers7d: num(uniq7?.n),
-      activeNow: num(activeNow?.n),
-      failed24h: num(failed24?.n),
-      demoVisits: num(demoVisits?.n),
-    },
+    activity,
     loginsByDay: loginsByDay.map((r: any) => ({ day: r.day, logins: num(r.logins), users: num(r.users) })),
     signupsByDay: signupsByDay.map((r: any) => ({ day: r.day, n: num(r.n) })),
     byMethod: byMethod.map((r: any) => ({ method: r.method, n: num(r.n) })),
@@ -270,4 +280,16 @@ superAdminRouter.get('/orders', async (req: Request, res: Response) => {
             c.name AS customer_name, b.name AS business_name ${from} ORDER BY o.created_at DESC LIMIT ? OFFSET ?`
   ).all(...args, limit, offset);
   res.json({ rows: rows.map((r: any) => ({ ...r, total_amount: num(r.total_amount) })), total: num(total?.n), page, limit });
+});
+
+// Errors from the portal endpoints: log everything, but only tell a signed-in super admin what failed.
+superAdminRouter.use((err: any, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) return next(err);
+  console.error('[superadmin] request failed:', req.method, req.originalUrl, err?.stack || err);
+  const user = (req as any).user;
+  const isAdmin = user && user.role === 'SUPER_ADMIN' && !user.is_demo;
+  res.status(500).json({
+    error: 'The admin query failed.',
+    ...(isAdmin ? { detail: String(err?.message || err).slice(0, 300) } : {}),
+  });
 });

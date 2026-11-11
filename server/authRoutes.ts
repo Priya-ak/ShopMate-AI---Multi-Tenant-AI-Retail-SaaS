@@ -202,6 +202,12 @@ authRouter.post('/auth/google', async (req: Request, res: Response) => {
       });
     }
 
+    // Google-first signup: the verified Google identity comes first, business details are asked afterwards.
+    const hasDetails = String(req.body?.businessName ?? '').trim() || String(req.body?.phone ?? '').trim();
+    if (!hasDetails) {
+      return res.json({ needsProfile: true, profile: { name: profile.name, email: profile.email, picture: profile.picture ?? null } });
+    }
+
     const fields = validateOwnerInput(
       { email: profile.email, name: req.body?.name || profile.name, phone: req.body?.phone, businessName: req.body?.businessName, businessCategory: req.body?.businessCategory },
       { requirePassword: false }

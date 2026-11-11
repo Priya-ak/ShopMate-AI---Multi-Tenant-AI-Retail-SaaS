@@ -59,6 +59,10 @@ The API runs as a Vercel serverless function backed by Supabase Postgres; SQLite
 See **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** for `DATABASE_URL`, `SESSION_SECRET`, Google sign-in and the
 Super Admin portal (`/superadmin`) setup.
 
+### Project guide and testing
+**[docs/PROJECT_GUIDE.md](docs/PROJECT_GUIDE.md)** explains how the project works, how the workflows connect, and how to
+test it in detail (`npm run test:api`, a browser test plan and curl checks).
+
 ### Running with Docker Compose
 ```bash
 cd deployment
