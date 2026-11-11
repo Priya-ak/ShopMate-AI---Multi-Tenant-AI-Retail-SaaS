@@ -51,7 +51,7 @@ const TOPICS: Topic[] = [
     id: 'demo',
     keywords: ['demo', 'try', 'trial', 'test', 'sample', 'explore', 'persona', 'preview', 'without login', 'without registering', 'see how'],
     answer:
-      'You can try ShopMate without an account: open Sign In and use "One-Click Demo Personas" - Store Owner, Store Employee, Customer or Platform Admin. Each opens that part of the application instantly with sample store data so you can see how it works.',
+      'You can try ShopMate without an account: open Sign In and use "One-Click Demo Personas" - Store Owner, Store Employee or Customer. Each opens that part of the application instantly with sample store data so you can see how it works.',
   },
   {
     id: 'chatbot',
@@ -63,7 +63,7 @@ const TOPICS: Topic[] = [
     id: 'roles',
     keywords: ['role', 'roles', 'owner', 'employee', 'staff', 'customer', 'admin', 'permission', 'access', 'team', 'who can'],
     answer:
-      'There are four roles:\n• Store Owner - full control: catalogue, inventory, orders, customers, employees, analytics, integrations and settings\n• Store Employee - works orders and looks up stock\n• Customer - shops through the store\'s AI assistant and cart\n• Platform Admin - oversees the platform across stores',
+      'There are four roles:\n• Store Owner - full control: catalogue, inventory, orders, customers, employees, analytics, integrations and settings\n• Store Employee - works orders and looks up stock\n• Customer - shops through the store\'s AI assistant and cart\n• Platform Admin - the platform operator, who oversees all stores from a separate, private admin portal',
   },
   {
     id: 'inventory',

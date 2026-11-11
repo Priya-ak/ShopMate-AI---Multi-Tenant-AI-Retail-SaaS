@@ -28,12 +28,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, setCurrentView })
 
   const isOwner = user?.role === 'BUSINESS_OWNER';
   const isEmployee = user?.role === 'EMPLOYEE';
-  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, roles: ['BUSINESS_OWNER'] },
     { id: 'employee_dashboard', label: 'Staff Portal', icon: LayoutDashboard, roles: ['EMPLOYEE'] },
-    { id: 'super_admin', label: 'Platform Tenants', icon: LayoutDashboard, roles: ['SUPER_ADMIN'] },
     { id: 'products', label: 'Products', icon: Package, roles: ['BUSINESS_OWNER', 'EMPLOYEE'] },
     { id: 'categories', label: 'Categories', icon: Layers, roles: ['BUSINESS_OWNER'] },
     { id: 'inventory', label: 'Inventory & Ledger', icon: Boxes, roles: ['BUSINESS_OWNER', 'EMPLOYEE'] },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { Navbar } from './components/Navbar';
@@ -20,38 +20,119 @@ import { EmployeesPage } from './pages/EmployeesPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { SuperAdminDashboard } from './pages/SuperAdminDashboard';
 import { CustomerShoppingPage } from './pages/CustomerShoppingPage';
 import { AppAssistantPage } from './pages/AppAssistantPage';
 import { Order } from './types';
 
+/**
+ * Every screen has its own URL, so a refresh stays on the same page and the browser Back/Forward buttons work.
+ * (vercel.json already serves index.html for all non-API paths. "/superadmin" is the separate admin portal.)
+ */
+const VIEW_PATHS: Record<string, string> = {
+  landing: '/',
+  login: '/login',
+  register: '/register',
+  forgot_password: '/forgot-password',
+  shopping: '/shopping',
+  dashboard: '/dashboard',
+  employee_dashboard: '/staff',
+  products: '/products',
+  categories: '/categories',
+  inventory: '/inventory',
+  orders: '/orders',
+  customers: '/customers',
+  conversations: '/conversations',
+  employees: '/employees',
+  analytics: '/analytics',
+  integrations: '/integrations',
+  settings: '/settings',
+};
+const PATH_VIEWS: Record<string, string> = Object.fromEntries(Object.entries(VIEW_PATHS).map(([v, p]) => [p, v]));
+const AUTH_SCREENS = ['login', 'register', 'forgot_password'];
+const OPEN_VIEWS = ['landing', 'shopping', ...AUTH_SCREENS]; // everything else needs a signed-in user
+
+const viewFromPath = (pathname: string) => PATH_VIEWS[pathname.replace(/\/+$/, '') || '/'] ?? 'landing';
+
+const homeViewFor = (user: { role?: string } | null) => {
+  if (!user) return 'landing';
+  if (user.role === 'CUSTOMER') return 'shopping';
+  if (user.role === 'EMPLOYEE') return 'employee_dashboard';
+  return 'dashboard';
+};
+
+/** Where a visitor must be sent instead of `view` (null = the view is fine). */
+function guardTarget(view: string, user: { role?: string } | null): string | null {
+  if (!user) return OPEN_VIEWS.includes(view) ? null : 'login';
+  if (AUTH_SCREENS.includes(view)) return homeViewFor(user);
+  if (user.role === 'CUSTOMER') return OPEN_VIEWS.includes(view) ? null : 'shopping';
+  if (view === 'dashboard' && user.role !== 'BUSINESS_OWNER') return homeViewFor(user);
+  if (view === 'employee_dashboard' && user.role !== 'EMPLOYEE') return homeViewFor(user);
+  return null;
+}
+
 function MainApp() {
-  const { user } = useAuth();
-  const [currentView, setCurrentView] = useState<string>('landing');
-  const [history, setHistory] = useState<string[]>(['landing']);
+  const { user, isLoading, logout } = useAuth();
+  const [currentView, setCurrentView] = useState<string>(() => viewFromPath(window.location.pathname));
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [selectedOrderForDetails, setSelectedOrderForDetails] = useState<Order | null>(null);
+  const historyIndex = useRef(0); // position in this tab's navigation stack (0 = first page opened)
+  const previousUser = useRef(user);
 
-  const navigateTo = (view: string) => {
-    setHistory((prev) => (prev[prev.length - 1] === view ? prev : [...prev, view]));
+  useEffect(() => {
+    const st = window.history.state;
+    historyIndex.current = typeof st?.idx === 'number' ? st.idx : 0;
+    window.history.replaceState({ idx: historyIndex.current }, '', window.location.pathname);
+    const onPop = (e: PopStateEvent) => {
+      historyIndex.current = typeof e.state?.idx === 'number' ? e.state.idx : 0;
+      setCurrentView(viewFromPath(window.location.pathname));
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const navigateTo = useCallback((view: string, opts?: { replace?: boolean }) => {
+    const path = VIEW_PATHS[view] ?? '/';
+    if (window.location.pathname !== path) {
+      if (opts?.replace) {
+        window.history.replaceState({ idx: historyIndex.current }, '', path);
+      } else {
+        historyIndex.current += 1;
+        window.history.pushState({ idx: historyIndex.current }, '', path);
+      }
+    }
     setCurrentView(view);
-  };
+    window.scrollTo(0, 0);
+  }, []);
 
   const goBack = () => {
-    if (history.length > 1) {
-      const nextHistory = [...history];
-      nextHistory.pop(); // remove current view
-      const prevView = nextHistory[nextHistory.length - 1];
-      setHistory(nextHistory);
-      setCurrentView(prevView);
-    } else {
-      // Fallback
-      if (user?.role === 'EMPLOYEE') setCurrentView('employee_dashboard');
-      else if (user?.role === 'SUPER_ADMIN') setCurrentView('super_admin');
-      else if (user?.role === 'BUSINESS_OWNER') setCurrentView('dashboard');
-      else setCurrentView('landing');
-    }
+    if (historyIndex.current > 0) window.history.back();
+    else navigateTo(homeViewFor(user), { replace: true });
   };
+
+  // Logout / expired session -> back to the landing page. Otherwise keep visitors out of screens they may not open.
+  useEffect(() => {
+    if (isLoading) return;
+    if (previousUser.current && !user) {
+      previousUser.current = user;
+      setIsCartOpen(false);
+      setSelectedOrderForDetails(null);
+      navigateTo('landing', { replace: true });
+      return;
+    }
+    previousUser.current = user;
+    // The platform admin has their own portal (own sign-in and session): never host them in the store app.
+    if (user?.role === 'SUPER_ADMIN') {
+      logout();
+      window.location.replace('/superadmin');
+      return;
+    }
+    const target = guardTarget(currentView, user);
+    if (target && target !== currentView) navigateTo(target, { replace: true });
+  }, [currentView, user, isLoading, navigateTo, logout]);
+
+  // A private page is opened (e.g. after a refresh) while the saved session is still being checked.
+  const checkingSession = isLoading && !OPEN_VIEWS.includes(currentView);
+  const shownView = checkingSession ? '' : currentView;
 
   // If user clicks "Details" from dashboard, open orders view with that order preselected
   const handleSelectOrder = (order: Order) => {
@@ -81,7 +162,13 @@ function MainApp() {
 
         {/* Dynamic Page Router */}
         <main className="flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
-          {currentView === 'landing' && (
+          {checkingSession && (
+            <div className="min-h-[50vh] flex items-center justify-center text-slate-400 text-sm" role="status" aria-live="polite">
+              <span className="w-5 h-5 mr-3 rounded-full border-2 border-slate-600 border-t-indigo-400 animate-spin" />
+              Restoring your session...
+            </div>
+          )}
+          {shownView === 'landing' && (
             <LandingPage
               onStartShopping={() => navigateTo('shopping')}
               onOpenLogin={() => navigateTo('login')}
@@ -89,13 +176,12 @@ function MainApp() {
             />
           )}
 
-          {currentView === 'login' && (
+          {shownView === 'login' && (
             <LoginPage
               onSuccess={(loggedInUser) => {
                 const role = loggedInUser?.role || user?.role;
                 if (role === 'CUSTOMER') navigateTo('shopping');
                 else if (role === 'EMPLOYEE') navigateTo('employee_dashboard');
-                else if (role === 'SUPER_ADMIN') navigateTo('super_admin');
                 else navigateTo('dashboard');
               }}
               onGoToRegister={() => navigateTo('register')}
@@ -103,18 +189,18 @@ function MainApp() {
             />
           )}
 
-          {currentView === 'register' && (
+          {shownView === 'register' && (
             <RegisterPage
               onSuccess={() => navigateTo('dashboard')}
               onGoToLogin={() => navigateTo('login')}
             />
           )}
 
-          {currentView === 'forgot_password' && (
+          {shownView === 'forgot_password' && (
             <ForgotPasswordPage onBackToLogin={() => navigateTo('login')} />
           )}
 
-          {currentView === 'shopping' && user && (
+          {shownView === 'shopping' && user && (
             <CustomerShoppingPage
               openCartDrawer={() => setIsCartOpen(true)}
               onBack={goBack}
@@ -122,7 +208,7 @@ function MainApp() {
           )}
 
           {/* Signed-out visitors get the public ShopMate AI help assistant (no store, no cart) */}
-          {currentView === 'shopping' && !user && (
+          {shownView === 'shopping' && !user && (
             <AppAssistantPage
               onBack={goBack}
               onOpenLogin={() => navigateTo('login')}
@@ -130,7 +216,7 @@ function MainApp() {
             />
           )}
 
-          {currentView === 'dashboard' && (
+          {shownView === 'dashboard' && (
             <OwnerDashboard
               setCurrentView={navigateTo}
               onSelectOrder={handleSelectOrder}
@@ -138,7 +224,7 @@ function MainApp() {
             />
           )}
 
-          {currentView === 'employee_dashboard' && (
+          {shownView === 'employee_dashboard' && (
             <EmployeeDashboard
               setCurrentView={navigateTo}
               onSelectOrder={handleSelectOrder}
@@ -146,32 +232,31 @@ function MainApp() {
             />
           )}
 
-          {currentView === 'products' && <ProductsPage onBack={goBack} />}
+          {shownView === 'products' && <ProductsPage onBack={goBack} />}
 
-          {currentView === 'categories' && <CategoriesPage onBack={goBack} />}
+          {shownView === 'categories' && <CategoriesPage onBack={goBack} />}
 
-          {currentView === 'inventory' && <InventoryPage onBack={goBack} />}
+          {shownView === 'inventory' && <InventoryPage onBack={goBack} />}
 
-          {currentView === 'orders' && (
+          {shownView === 'orders' && (
             <OrdersPage
               initialSelectedOrder={selectedOrderForDetails}
               onBack={goBack}
             />
           )}
 
-          {currentView === 'customers' && <CustomersPage onBack={goBack} />}
+          {shownView === 'customers' && <CustomersPage onBack={goBack} />}
 
-          {currentView === 'conversations' && <ConversationsPage onBack={goBack} />}
+          {shownView === 'conversations' && <ConversationsPage onBack={goBack} />}
 
-          {currentView === 'employees' && <EmployeesPage onBack={goBack} />}
+          {shownView === 'employees' && <EmployeesPage onBack={goBack} />}
 
-          {currentView === 'analytics' && <AnalyticsPage onBack={goBack} />}
+          {shownView === 'analytics' && <AnalyticsPage onBack={goBack} />}
 
-          {currentView === 'integrations' && <IntegrationsPage onBack={goBack} />}
+          {shownView === 'integrations' && <IntegrationsPage onBack={goBack} />}
 
-          {currentView === 'settings' && <SettingsPage onBack={goBack} />}
+          {shownView === 'settings' && <SettingsPage onBack={goBack} />}
 
-          {currentView === 'super_admin' && <SuperAdminDashboard onBack={goBack} />}
         </main>
       </div>
 

@@ -50,7 +50,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
     }
   };
 
-  const handleDemoClick = async (role: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'SUPER_ADMIN') => {
+  const handleDemoClick = async (role: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER') => {
     setErrorMsg(null);
     setIsLoading(true);
     try {
@@ -145,7 +145,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
             <span>One-Click Demo Personas</span>
           </div>
-          <div className="grid grid-cols-2 gap-2 text-[11px]">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]">
             <button
               type="button"
               disabled={isLoading}
@@ -172,15 +172,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({
             >
               <span className="font-semibold text-white">🛍️ Customer</span>
               <span className="text-[10px] text-slate-400">AI chat shopping & cart</span>
-            </button>
-            <button
-              type="button"
-              disabled={isLoading}
-              onClick={() => handleDemoClick('SUPER_ADMIN')}
-              className="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 font-medium text-left transition border border-slate-700/60 hover:border-indigo-500/50 flex flex-col gap-0.5"
-            >
-              <span className="font-semibold text-white">⚡ Platform Admin</span>
-              <span className="text-[10px] text-slate-400">Multi-tenant management</span>
             </button>
           </div>
         </div>

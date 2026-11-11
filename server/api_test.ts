@@ -71,12 +71,14 @@ r = await call('GET', '/auth/me', undefined, ownerToken + 'x'); ok(r.s === 401, 
 
 console.log('# demo personas (no credentials)');
 const demo: any = {};
-for (const p of ['OWNER', 'EMPLOYEE', 'CUSTOMER', 'SUPER_ADMIN']) {
+for (const p of ['OWNER', 'EMPLOYEE', 'CUSTOMER']) {
   r = await call('POST', '/auth/demo-login', { persona: p }); ok(r.s === 200 && r.j.token && r.j.user.is_demo, `demo ${p}`, r); demo[p] = r.j;
 }
 r = await call('POST', '/auth/demo-login', { persona: 'OWNER' }); ok(r.s === 200, 'demo repeat is idempotent', r);
 r = await call('GET', '/products', undefined, demo.OWNER.token); ok(r.s === 200 && r.j.products?.length > 0, 'demo owner sees demo products', r.j);
-r = await call('GET', '/businesses', undefined, demo.SUPER_ADMIN.token); ok(r.s === 200 && r.j.length === 1, 'demo platform admin sees only demo tenant', r.j?.length);
+r = await call('POST', '/auth/demo-login', { persona: 'SUPER_ADMIN' }); ok(r.s === 400 && !r.j.token, 'the demo platform-admin persona no longer exists', r);
+r = await call('POST', '/auth/login', { email: 'superadmin@shopmate.com', password: 'super123' }); ok(r.s === 401 || r.s === 400, 'the old public demo admin credentials do not work', r.s);
+r = await call('GET', '/businesses', undefined, demo.OWNER.token); ok(r.s === 403, 'store users cannot list all tenants', r.s);
 
 console.log('# tenant isolation / settings');
 r = await call('GET', '/products', undefined, ownerToken); ok(r.s === 200 && r.j.products.length === 0, 'new tenant starts empty (no demo leak)', r.j);
@@ -158,7 +160,7 @@ r = await call('DELETE', `/categories/${crudCat}`, undefined, ownerToken); ok(r.
 r = await call('GET', '/categories', undefined, ownerToken); ok(!r.j.some((c: any) => c.id === crudCat), 'deleted category gone', r.s);
 r = await call('PUT', '/businesses/me', { name: 'Ravi Textiles Pvt', ai_greeting: 'Hello' }, ownerToken); ok(r.s === 200, 'update store profile', r);
 r = await call('PUT', '/businesses/me', { name: 'Ravi Textiles' }, ownerToken); ok(r.s === 200, 'restore store name', r);
-for (const persona of ['OWNER', 'EMPLOYEE', 'CUSTOMER', 'SUPER_ADMIN']) {
+for (const persona of ['OWNER', 'EMPLOYEE', 'CUSTOMER']) {
   r = await call('POST', '/auth/demo-login', { persona }); ok(r.s === 200 && r.j.token, `demo login ${persona}`, r);
 }
 
@@ -213,7 +215,7 @@ r = await call('POST', '/superadmin/login', SA); ok(r.s === 200 && r.j.token, 's
 const saToken = r.j.token;
 for (const p of ['/overview', '/logins', '/users', '/buyers', '/businesses', '/orders']) {
   r = await call('GET', '/superadmin' + p, undefined, ownerToken); ok(r.s === 403, `owner blocked from ${p}`, r.s);
-  r = await call('GET', '/superadmin' + p, undefined, demo.SUPER_ADMIN.token); ok(r.s === 403, `demo admin blocked from ${p}`, r.s);
+  r = await call('GET', '/superadmin' + p, undefined, demo.CUSTOMER.token); ok(r.s === 403, `demo customer blocked from ${p}`, r.s);
   r = await call('GET', '/superadmin' + p); ok(r.s === 401, `anon blocked from ${p}`, r.s);
 }
 r = await call('GET', '/superadmin/overview', undefined, saToken); const ov = r.j;

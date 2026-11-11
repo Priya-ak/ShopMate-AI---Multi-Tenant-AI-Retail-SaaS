@@ -35,6 +35,18 @@ async function provisionSuperAdmin() {
   }
 }
 
+/**
+ * The old one-click "Platform Admin" demo account had a publicly documented password. It is retired (the real
+ * Super Admin portal replaces it), so make sure that account can never sign in again. Idempotent and best-effort.
+ */
+async function retireDemoAdmin() {
+  try {
+    await db.prepare(`UPDATE users SET password_hash = '!retired', role = 'CUSTOMER' WHERE id = 'usr_admin_demo'`).run();
+  } catch (err: any) {
+    console.warn('[bootstrap] could not retire the old demo admin account:', err?.message);
+  }
+}
+
 let ready: Promise<void> | null = null;
 
 export function ensureApp(): Promise<void> {
@@ -42,6 +54,7 @@ export function ensureApp(): Promise<void> {
     ready = (async () => {
       await ensureDatabase();
       await provisionSuperAdmin();
+      await retireDemoAdmin();
     })().catch((err) => {
       ready = null; // allow a retry on the next request (e.g. DATABASE_URL fixed, transient outage)
       throw err;

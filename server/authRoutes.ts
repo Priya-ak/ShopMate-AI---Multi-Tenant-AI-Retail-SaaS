@@ -103,7 +103,7 @@ authRouter.post('/auth/login', async (req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 // POST /api/auth/demo-login  (one-click personas: no credentials required)
 // ---------------------------------------------------------------------------
-const PERSONAS: DemoPersona[] = ['OWNER', 'EMPLOYEE', 'CUSTOMER', 'SUPER_ADMIN'];
+const PERSONAS: DemoPersona[] = ['OWNER', 'EMPLOYEE', 'CUSTOMER'];
 
 authRouter.post('/auth/demo-login', async (req: Request, res: Response) => {
   const rl = rateLimit(`demo:${clientIp(req)}`, 40, 10 * 60 * 1000);
@@ -111,7 +111,10 @@ authRouter.post('/auth/demo-login', async (req: Request, res: Response) => {
 
   try {
     const requested = String(req.body?.persona || 'OWNER').toUpperCase() as DemoPersona;
-    const persona = PERSONAS.includes(requested) ? requested : 'OWNER';
+    if (!PERSONAS.includes(requested)) {
+      return res.status(400).json({ error: 'Unknown demo persona. Choose Owner, Employee or Customer.' });
+    }
+    const persona = requested;
     const { user, business } = await ensureDemoPersona(persona);
     await recordLoginEvent({ req, method: 'demo', success: true, user });
     res.json({ user, token: signSession(user.id), business, businessName: business?.name });

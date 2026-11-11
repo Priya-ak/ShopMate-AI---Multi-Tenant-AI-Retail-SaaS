@@ -118,16 +118,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, setCurrentView, ope
                     Staff Portal
                   </button>
                 )}
-                {user.role === 'SUPER_ADMIN' && (
-                  <button
-                    onClick={() => setCurrentView('super_admin')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                      currentView === 'super_admin' ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800/60'
-                    }`}
-                  >
-                    Platform Admin
-                  </button>
-                )}
                 <button
                   onClick={logout}
                   className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition"
@@ -212,14 +202,6 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, setCurrentView, ope
                   className="w-full text-left px-3 py-2 rounded-lg text-sm text-slate-200 hover:bg-slate-800"
                 >
                   Employee Portal
-                </button>
-              )}
-              {user.role === 'SUPER_ADMIN' && (
-                <button
-                  onClick={() => { setCurrentView('super_admin'); setMobileMenuOpen(false); }}
-                  className="w-full text-left px-3 py-2 rounded-lg text-sm text-slate-200 hover:bg-slate-800"
-                >
-                  Platform Admin
                 </button>
               )}
               <button

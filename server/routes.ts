@@ -116,7 +116,7 @@ apiRouter.get('/businesses', authMiddleware, async (req: Request, res: Response)
     return res.status(403).json({ error: 'Forbidden: Super Admin only' });
   }
 
-  // The one-click "Platform Admin" demo persona is public, so it only ever sees the sandbox tenant.
+  // Real platform admins only (the demo admin persona no longer exists).
   const businesses = await db.prepare(`
     SELECT b.*,
       (SELECT COUNT(*) FROM products WHERE business_id = b.id) as product_count,

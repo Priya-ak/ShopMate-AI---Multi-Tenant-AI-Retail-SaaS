@@ -159,7 +159,7 @@ export async function createBusinessOwner(input: NewOwnerInput): Promise<{ user:
 // ---------------------------------------------------------------------------
 // One-click demo personas (a shared, read-mostly sandbox tenant)
 // ---------------------------------------------------------------------------
-export type DemoPersona = 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'SUPER_ADMIN';
+export type DemoPersona = 'OWNER' | 'EMPLOYEE' | 'CUSTOMER';
 
 const DEMO_QUESTIONS = [
   'Show me red kurtis below ₹1,500',
@@ -174,7 +174,6 @@ const PERSONAS: Record<DemoPersona, { id: string; email: string; password: strin
   OWNER: { id: 'usr_owner_demo', email: 'owner@shopmate.com', password: 'admin123', name: 'Rajesh Patel (Store Owner)', role: 'BUSINESS_OWNER', business: true, phone: '+91 98765 43210' },
   EMPLOYEE: { id: 'usr_emp_demo', email: 'priya@shopmate.com', password: 'employee123', name: 'Priya Nair (Staff Executive)', role: 'EMPLOYEE', business: true, phone: '+91 98765 43211' },
   CUSTOMER: { id: 'usr_cust_demo', email: 'ananya@example.com', password: 'customer123', name: 'Ananya Sen (Demo Customer)', role: 'CUSTOMER', business: true, phone: '+91 98765 11111' },
-  SUPER_ADMIN: { id: 'usr_admin_demo', email: 'superadmin@shopmate.com', password: 'super123', name: 'Aarav Sharma (Platform Admin)', role: 'SUPER_ADMIN', business: false, phone: '+91 99999 00000' },
 };
 
 async function seedDemoStore() {

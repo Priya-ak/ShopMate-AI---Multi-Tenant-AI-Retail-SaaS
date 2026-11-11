@@ -17,7 +17,7 @@ interface AuthContextType {
   clearPendingGoogle: () => void;
   refreshBusiness: () => Promise<void>;
   logout: () => void;
-  switchDemoRole: (role: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'SUPER_ADMIN' | 'BIZ_2') => Promise<User>;
+  switchDemoRole: (role: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'BIZ_2') => Promise<User>;
   setCurrentBusinessId: (id: string) => void;
 }
 
@@ -137,12 +137,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setBusiness(null);
     setToken(null);
     localStorage.removeItem('shopmate_token');
+    localStorage.removeItem('shopmate_current_biz_id');
+    setCurrentBizId('');
+    setPendingGoogle(null);
   };
 
-  const switchDemoRole = async (role: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'SUPER_ADMIN' | 'BIZ_2'): Promise<User> => {
+  const switchDemoRole = async (role: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'BIZ_2'): Promise<User> => {
     setIsLoading(true);
     try {
-      const personaKey = (role === 'BIZ_2' ? 'OWNER' : role) as 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'SUPER_ADMIN';
+      const personaKey = (role === 'BIZ_2' ? 'OWNER' : role) as 'OWNER' | 'EMPLOYEE' | 'CUSTOMER';
       const res = await api.loginDemoPersona(personaKey);
       setUser(res.user);
       setToken(res.token);

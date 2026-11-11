@@ -38,7 +38,7 @@ can watch the whole platform from a separate portal.
 | `CUSTOMER` | Registering as a shopper / one-click demo | Browse the store, chat with its assistant, place orders |
 | `SUPER_ADMIN` | Server start-up from `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` | Read-only view of all real tenants in `/superadmin` |
 
-**Demo personas** (one-click on the Login page) create/open sandbox users with `is_demo = 1` inside a shared demo store
+**Demo personas** (one-click on the Login page: Store Owner, Store Employee, Customer) create/open sandbox users with `is_demo = 1` inside a shared demo store
 (`biz_demo_store_001`). They need no credentials and are hidden from the Super Admin numbers unless "include demo"
 is switched on.
 
@@ -285,7 +285,7 @@ Use a private window. Tick each box.
 
 **B. Demo personas (no credentials)**
 - [ ] Sign In → **Store Owner**: dashboard opens, no error. Sign out.
-- [ ] Repeat for **Store Employee**, **Customer** (shopping page + chat), **Platform Admin** (a sandbox admin: it opens without credentials but is deliberately *not* allowed into the real `/superadmin` portal).
+- [ ] Repeat for **Store Employee** and **Customer** (shopping page + chat). There is no demo admin: the platform admin only uses `/superadmin`.
 
 **C. Register with email**
 - [ ] Register Business → fill every field → **Complete Business Registration**: dashboard opens with your store name.

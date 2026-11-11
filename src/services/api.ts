@@ -48,7 +48,7 @@ export const api = {
     return res.json();
   },
 
-  async loginDemoPersona(persona: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER' | 'SUPER_ADMIN') {
+  async loginDemoPersona(persona: 'OWNER' | 'EMPLOYEE' | 'CUSTOMER') {
     const res = await fetch(`${API_BASE}/auth/demo-login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

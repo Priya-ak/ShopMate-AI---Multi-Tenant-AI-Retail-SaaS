@@ -68,8 +68,8 @@ are searchable and filterable and can be exported to CSV.
 ## 5. Demo personas
 
 "One-Click Demo Personas" create a sandbox on demand (`POST /api/auth/demo-login`, no credentials):
-a shared demo store (`biz_demo_store_001`) with sample products, plus Owner, Employee, Customer and Platform Admin
-accounts flagged `is_demo`. The demo Platform Admin only ever sees the demo store; real tenants are never exposed.
+a shared demo store (`biz_demo_store_001`) with sample products, plus Owner, Employee and Customer
+accounts flagged `is_demo`. There is no demo admin; the platform operator uses the private `/superadmin` portal only.
 
 ## 6. Deploy checklist
 
