@@ -233,6 +233,189 @@ r = await call('GET', '/superadmin/businesses', undefined, saToken); ok(r.j.rows
 r = await call('GET', '/superadmin/orders?status=Cancelled', undefined, saToken); ok(r.j.rows.length === 1, 'orders list + status filter', r.j.rows);
 r = await call('GET', '/superadmin/users?q=%25%27%3B--', undefined, saToken); ok(r.s === 200, 'search input is safe', r.s);
 
+
+console.log('# delete buttons: customers, employees, conversations');
+{
+  r = await call('POST', '/customers', { name: 'Delete Me', phone: '+91 97000 55555' }, ownerToken); ok(r.s === 201 && r.j.id, 'owner adds a customer to delete', r); const mk = r.j;
+  r = await call('DELETE', `/customers/${mk.id}`, undefined, empTok); ok(r.s === 403, 'employee cannot delete a customer', r);
+  r = await call('DELETE', `/customers/${mk.id}`); ok(r.s === 401, 'anonymous cannot delete a customer', r.s);
+  const o3 = (await call('POST', '/auth/register', { email: 'owner3@example.com', name: 'Third Owner', phone: '+91 90000 33333', businessName: 'Third Store', businessCategory: 'Fashion', password: 'secret123' })).j;
+  r = await call('DELETE', `/customers/${mk.id}`, undefined, o3.token); ok(r.s === 404, "another store cannot delete this store's customer", r);
+  r = await call('DELETE', `/customers/${mk.id}`, undefined, ownerToken); ok(r.s === 200, 'owner deletes a customer', r);
+  r = await call('GET', `/customers/${mk.id}`, undefined, ownerToken); ok(r.s === 404, 'deleted customer is gone', r.s);
+  const all = (await call('GET', '/customers', undefined, ownerToken)).j;
+  const withOrders = all.find((c: any) => Number(c.total_orders) > 0);
+  r = await call('DELETE', `/customers/${withOrders.id}`, undefined, ownerToken); ok(r.s === 409 && r.j.code === 'HAS_ORDERS' && /order/.test(r.j.error), 'customer with orders is protected with a clear message', r);
+
+  const emp2 = (await call('POST', '/employees', { name: 'Temp Staff', email: 'temp.staff@example.com', password: 'employee1' }, ownerToken)).j;
+  const empLogin = (await call('POST', '/auth/login', { email: 'temp.staff@example.com', password: 'employee1' })).j;
+  r = await call('DELETE', `/employees/${emp2.id}`, undefined, empTok); ok(r.s === 403, 'employee cannot remove staff', r);
+  r = await call('DELETE', `/employees/${emp2.id}`, undefined, o3.token); ok(r.s === 404, 'another store cannot remove this staff member', r);
+  const ownerId = (await call('GET', '/auth/me', undefined, ownerToken)).j.user?.id;
+  r = await call('DELETE', `/employees/${ownerId}`, undefined, ownerToken); ok(r.s === 400 && r.j.code === 'SELF_DELETE', 'owner cannot delete themselves', r);
+  r = await call('DELETE', `/employees/${emp2.id}`, undefined, ownerToken); ok(r.s === 200, 'owner removes staff', r);
+  r = await call('GET', '/auth/me', undefined, empLogin.token); ok(r.s === 401, 'removed staff token stops working', r.s);
+  r = await call('POST', '/auth/login', { email: 'temp.staff@example.com', password: 'employee1' }); ok(r.s === 401, 'removed staff cannot sign in', r.s);
+
+  const aud = await db.prepare(`SELECT COUNT(*) as n FROM audit_logs WHERE action IN ('customer.delete','employee.delete')`).get() as any;
+  ok(Number(aud.n) >= 2, 'deletes are written to the audit log', aud);
+}
+
+console.log('# WhatsApp: connect (coexistence), signed webhook, echoes, history, replies');
+{
+  const crypto = await import('node:crypto');
+  const sent: any[] = []; const graphCalls: any[] = [];
+  const mock = http.createServer((rq, rs) => {
+    const chunks: Buffer[] = [];
+    rq.on('data', (c) => chunks.push(c));
+    rq.on('end', () => {
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : null;
+      const u = new URL(rq.url!, 'http://x');
+      graphCalls.push({ method: rq.method, path: u.pathname, auth: rq.headers.authorization, body });
+      const send = (st: number, j: any) => { rs.statusCode = st; rs.setHeader('content-type', 'application/json'); rs.end(JSON.stringify(j)); };
+      if (u.pathname.endsWith('/oauth/access_token')) return send(u.searchParams.get('code') === 'GOOD_CODE_1234567890' ? 200 : 400, u.searchParams.get('code') === 'GOOD_CODE_1234567890' ? { access_token: 'TOKEN_SECRET_ABC' } : { error: { message: 'bad code', code: 100 } });
+      if (rq.headers.authorization !== 'Bearer TOKEN_SECRET_ABC') return send(401, { error: { code: 190, message: 'invalid token' } });
+      if (rq.method === 'GET' && /\/\d+$/.test(u.pathname)) return send(200, { display_phone_number: '+91 98765 43210', verified_name: 'Ravi Textiles' });
+      if (u.pathname.endsWith('/messages')) { sent.push(body); return send(200, { messages: [{ id: 'wamid.OUT' + sent.length }] }); }
+      return send(200, { success: true });
+    });
+  });
+  await new Promise<void>((r2) => mock.listen(0, '127.0.0.1', () => r2()));
+  process.env.META_GRAPH_BASE = `http://127.0.0.1:${(mock.address() as any).port}`;
+
+  // Not configured yet -> clear message, nothing breaks.
+  r = await call('GET', '/whatsapp/status', undefined, ownerToken); ok(r.s === 200 && r.j.platform.connectAvailable === false && r.j.connected === false, 'status when platform not configured', r.j);
+  r = await call('POST', '/whatsapp/connect', { code: 'GOOD_CODE_1234567890', phone_number_id: '111222333', waba_id: '999888777' }, ownerToken); ok(r.s === 503 && r.j.code === 'WA_NOT_CONFIGURED', 'connect refused cleanly when Meta is not configured', r);
+  r = await fetch(base + '/webhooks/whatsapp').then(async (x) => ({ s: x.status })); ok(r.s === 503, 'webhook GET refused when not configured', r);
+
+  process.env.META_APP_ID = '123456789'; process.env.META_APP_SECRET = 'app-secret-for-tests'; process.env.META_CONFIG_ID = '555666777'; process.env.WHATSAPP_VERIFY_TOKEN = 'verify-me-please';
+  r = await call('GET', '/health'); ok(r.j.whatsappConfigured === true && r.j.whatsappWebhookConfigured === true, 'health reports WhatsApp configured (no secrets)', r.j);
+  ok(!JSON.stringify(r.j).includes('app-secret-for-tests'), 'health does not leak secrets');
+
+  r = await call('GET', '/whatsapp/status'); ok(r.s === 401, 'status needs login', r.s);
+  r = await call('GET', '/whatsapp/status', undefined, demo.CUSTOMER.token); ok(r.s === 403, 'customers cannot read WhatsApp status', r.s);
+  r = await call('GET', '/whatsapp/status', undefined, empTok); ok(r.s === 200 && r.j.platform.connectAvailable && r.j.platform.appId === '123456789' && !('secret' in r.j.platform), 'staff can read status; only public ids exposed', r.j);
+
+  r = await call('POST', '/whatsapp/connect', { code: 'GOOD_CODE_1234567890', phone_number_id: '111222333', waba_id: '999888777' }, empTok); ok(r.s === 403, 'employee cannot connect WhatsApp', r.s);
+  r = await call('POST', '/whatsapp/connect', { code: 'x', phone_number_id: 'abc', waba_id: '1' }, ownerToken); ok(r.s === 400, 'connect validates input', r);
+  r = await call('POST', '/whatsapp/connect', { code: 'BAD_CODE_1234567890', phone_number_id: '111222333', waba_id: '999888777' }, ownerToken); ok(r.s >= 400 && r.s < 600 && !JSON.stringify(r.j).includes('bad code'), 'bad code rejected, Meta error text not leaked', r);
+  r = await call('POST', '/whatsapp/connect', { code: 'GOOD_CODE_1234567890', phone_number_id: '111222333', waba_id: '999888777' }, ownerToken);
+  ok(r.s === 201 && r.j.connected && r.j.account.display_phone === '+91 98765 43210' && r.j.account.mode === 'COEXISTENCE', 'owner connects the existing number', r);
+  ok(!JSON.stringify(r.j).includes('TOKEN_SECRET_ABC') && !('access_token_enc' in (r.j.account || {})), 'access token never returned to the browser');
+  const row = await db.prepare('SELECT access_token_enc FROM whatsapp_accounts WHERE phone_number_id = ?').get('111222333') as any;
+  ok(row.access_token_enc.startsWith('v1:') && !row.access_token_enc.includes('TOKEN_SECRET_ABC'), 'token is encrypted at rest');
+  ok(graphCalls.some((c) => c.path.endsWith('/999888777/subscribed_apps') && c.method === 'POST') && !graphCalls.some((c) => c.path.endsWith('/register')), 'app subscribed to the WABA; number NOT re-registered (keeps the phone app working)');
+  ok(graphCalls.some((c) => c.path.endsWith('/111222333/smb_app_data') && c.body?.sync_type === 'history'), 'history + contact sync requested');
+  r = await call('GET', '/whatsapp/status', undefined, ownerToken); ok(r.j.connected === true && r.j.account.status === 'Connected', 'status after connect', r.j);
+  const o3tok = (await call('POST', '/auth/login', { email: 'owner3@example.com', password: 'secret123' })).j.token;
+  r = await call('POST', '/whatsapp/connect', { code: 'GOOD_CODE_1234567890', phone_number_id: '111222333', waba_id: '999888777' }, o3tok); ok(r.s === 409 && r.j.code === 'ALREADY_CONNECTED', 'same number cannot be claimed by another store', r);
+  r = await call('GET', '/whatsapp/status', undefined, o3tok); ok(r.j.connected === false, 'other store does not see this connection', r.j);
+
+  // Webhook verification handshake
+  const vg = (q: string) => fetch(base + '/webhooks/whatsapp?' + q).then(async (x) => ({ s: x.status, t: await x.text() }));
+  let v = await vg('hub.mode=subscribe&hub.verify_token=verify-me-please&hub.challenge=CHALLENGE42'); ok(v.s === 200 && v.t === 'CHALLENGE42', 'webhook verification echoes the challenge', v);
+  v = await vg('hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=X'); ok(v.s === 403, 'wrong verify token -> 403', v);
+
+  const hook = async (payload: any, signWith: string | null = 'app-secret-for-tests', rawOverride?: string) => {
+    const raw = rawOverride ?? JSON.stringify(payload);
+    const headers: any = { 'content-type': 'application/json' };
+    if (signWith) headers['x-hub-signature-256'] = 'sha256=' + crypto.createHmac('sha256', signWith).update(raw).digest('hex');
+    const x = await fetch(base + '/webhooks/whatsapp', { method: 'POST', headers, body: raw });
+    let j: any = null; try { j = await x.json(); } catch {}
+    return { s: x.status, j };
+  };
+  const wrap = (field: string, value: any, phoneId = '111222333') => ({ object: 'whatsapp_business_account', entry: [{ id: '999888777', changes: [{ field, value: { messaging_product: 'whatsapp', metadata: { display_phone_number: '919876543210', phone_number_id: phoneId }, ...value } }] }] });
+  const nowSec = () => Math.floor(Date.now() / 1000);
+  const inbound = (id: string, text: string, from = '919000011111', name = 'Kavya') => wrap('messages', { contacts: [{ profile: { name }, wa_id: from }], messages: [{ from, id, timestamp: String(nowSec()), type: 'text', text: { body: text } }] });
+  const convFor = async (phone: string) => await db.prepare(`SELECT * FROM conversations WHERE business_id = (SELECT business_id FROM whatsapp_accounts WHERE phone_number_id = '111222333') AND customer_phone = ?`).get('+' + phone) as any;
+  const msgsOf = async (cid: string) => await db.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC').all(cid) as any[];
+
+  r = await hook(inbound('wamid.A1', 'Hi, do you have red kurtis?'), null); ok(r.s === 401, 'unsigned webhook rejected', r);
+  r = await hook(inbound('wamid.A1', 'Hi, do you have red kurtis?'), 'wrong-secret'); ok(r.s === 401, 'wrongly signed webhook rejected', r);
+  ok(!(await convFor('919000011111')), 'rejected webhook stored nothing');
+  r = await hook(inbound('wamid.A1', 'Hi, do you have red kurtis?')); ok(r.s === 200 && r.j.processed === 1, 'signed inbound message accepted', r);
+  let conv = await convFor('919000011111');
+  ok(conv && conv.channel === 'WHATSAPP' && conv.customer_name === 'Kavya' && conv.status === 'New', 'conversation created for the right store with WhatsApp profile name', conv);
+  let ms = await msgsOf(conv.id); ok(ms[0].sender_type === 'CUSTOMER' && ms[0].content.includes('red kurtis') && ms.some((m) => m.sender_type === 'AI'), 'customer message stored and the shop agent answered automatically', ms);
+  const nAfterFirst = ms.length;
+  r = await hook(inbound('wamid.A1', 'Hi, do you have red kurtis?')); ok(r.s === 200 && r.j.processed === 0 && r.j.ignored === 1, 'Meta retry of the same message is de-duplicated', r);
+  ok((await msgsOf(conv.id)).length === nAfterFirst, 'no duplicate stored (and no second auto-reply)');
+  r = await hook(wrap('messages', { messages: [{ from: '919000011111', id: 'wamid.IMG', timestamp: String(nowSec()), type: 'image', image: { id: 'm1', caption: 'this one' } }] })); ok(r.s === 200, 'image message handled', r);
+  ok((await msgsOf(conv.id)).some((m) => m.content === '[image] this one'), 'non-text message shown as readable text');
+  r = await hook(inbound('wamid.UNK', 'hello', '919000099999', 'Nobody'), 'app-secret-for-tests'); // known number
+  r = await hook(wrap('messages', { messages: [{ from: '919000077777', id: 'wamid.X', timestamp: String(nowSec()), type: 'text', text: { body: 'hi' } }] }, '000000000')); ok(r.s === 200 && r.j.ignored >= 1 && !(await convFor('919000077777')), 'webhook for an unknown number is acknowledged and ignored', r);
+  r = await hook({ object: 'page', entry: [] }); ok(r.s === 200 && r.j.status === 'ignored', 'non-WhatsApp object ignored', r);
+  r = await hook(null, 'app-secret-for-tests', '{not json'); ok(r.s === 400 || r.s === 401, 'malformed webhook body rejected', r.s);
+
+  // Echo: owner replies from the phone
+  r = await hook(wrap('smb_message_echoes', { message_echoes: [{ from: '919876543210', to: '919000011111', id: 'wamid.E1', timestamp: String(nowSec()), type: 'text', text: { body: 'Yes! Sending photos now.' } }] }));
+  ok(r.s === 200 && r.j.processed === 1, 'message typed on the phone is mirrored (echo)', r);
+  ms = await msgsOf(conv.id); ok(ms.some((m) => m.sender_type === 'EMPLOYEE' && m.sender_name.includes('phone') && m.content === 'Yes! Sending photos now.'), 'echo stored as staff message in the same thread', ms.map((m) => m.sender_type));
+  r = await hook(wrap('smb_message_echoes', { message_echoes: [{ from: '919876543210', to: '919000011111', id: 'wamid.E1', timestamp: String(nowSec()), type: 'text', text: { body: 'Yes! Sending photos now.' } }] })); ok(r.j.processed === 0, 'echo retry de-duplicated', r);
+
+  // History sync (existing chats are kept)
+  const old = nowSec() - 40 * 86400;
+  r = await hook(wrap('history', { history: [{ metadata: { phase: 0, chunk_order: 1, progress: 100 }, threads: [{ id: '919000022222', messages: [
+    { from: '919000022222', id: 'wamid.H1', timestamp: String(old), type: 'text', text: { body: 'Old order question' } },
+    { from: '919876543210', id: 'wamid.H2', timestamp: String(old + 60), type: 'text', text: { body: 'Old answer from owner' } }] }] }] }));
+  ok(r.s === 200 && r.j.processed === 2, 'history import accepted', r);
+  const hc = await convFor('919000022222'); const hm = hc ? await msgsOf(hc.id) : [];
+  ok(hm.length === 2 && hm[0].sender_type === 'CUSTOMER' && hm[1].sender_type === 'EMPLOYEE' && hm[0].created_at.startsWith(new Date(old * 1000).toISOString().slice(0, 10)), 'old chats imported with original dates and direction', hm);
+  r = await call('GET', '/whatsapp/status', undefined, ownerToken); ok(r.j.account.history_status === 'imported' && !!r.j.account.last_webhook_at, 'status shows history imported + last webhook time', r.j.account);
+
+  // Tenant isolation for the CRM
+  r = await call('GET', `/conversations/${conv.id}/messages`, undefined, ownerToken); ok(r.s === 200 && r.j.length >= 3, 'owner reads WhatsApp thread in ShopMate', r.s);
+  r = await call('GET', `/conversations/${conv.id}/messages`, undefined, o3tok); ok(r.s === 200 && r.j.length === 0, "other store cannot read this store's messages", r.j.length);
+  r = await call('GET', `/conversations/${conv.id}/messages`); ok(r.s === 401, 'anonymous cannot read messages', r.s);
+  r = await call('POST', '/ai/summarise', { conversationId: conv.id }, o3tok); ok(r.s === 404, "other store cannot summarise this store's chat", r.s);
+  r = await call('DELETE', `/conversations/${conv.id}`, undefined, o3tok); ok(r.s === 404, "other store cannot delete this store's chat", r.s);
+
+  // Reply from ShopMate -> goes through Meta -> also visible in the Business app
+  const before = sent.length;
+  r = await call('POST', `/whatsapp/conversations/${conv.id}/reply`, { text: 'Here is the catalogue link' }, empTok);
+  ok(r.s === 201 && sent.length === before + 1 && sent[sent.length - 1].to === '919000011111' && sent[sent.length - 1].text.body === 'Here is the catalogue link', 'staff reply is sent to the customer via the Cloud API', { s: r.s, last: sent[sent.length - 1] });
+  r = await call('POST', `/whatsapp/conversations/${conv.id}/reply`, { text: '' }, empTok); ok(r.s === 400, 'empty reply rejected', r.s);
+  r = await call('POST', `/whatsapp/conversations/${conv.id}/reply`, { text: 'hi' }, o3tok); ok(r.s === 409 || r.s === 404, "other store cannot reply into this store's chat", r.s);
+  r = await call('POST', `/whatsapp/conversations/${hc.id}/reply`, { text: 'late reply' }, empTok); ok(r.s === 409 && r.j.code === 'WINDOW_CLOSED' && sent.length === before + 1, '24-hour window enforced (nothing sent)', r);
+  r = await call('POST', `/whatsapp/conversations/${conv.id}/reply`, { text: 'x' }, demo.CUSTOMER.token); ok(r.s === 403, 'customers cannot send via the business number', r.s);
+
+  // Auto-reply is ON by default after connecting (set to a known state first, then check the default separately below)
+  ok(((await db.prepare('SELECT auto_reply FROM whatsapp_accounts WHERE phone_number_id = ?').get('111222333')) as any).auto_reply == 1, 'auto-reply is on by default for a newly connected shop');
+  { const nA = sent.length; r = await hook(wrap('messages', { messages: [{ from: '919000066666', id: 'wamid.VOICE', timestamp: String(nowSec()), type: 'audio', audio: { id: 'a1' } }] }));
+    ok(r.s === 200 && sent.length === nA + 1 && /type what you are looking for/.test(sent[sent.length - 1].text.body) && sent[sent.length - 1].to === '919000066666', 'voice/photo message gets a polite automatic reply asking for text', sent.slice(nA)); }
+  // Auto-reply guardrails
+  r = await call('PUT', '/whatsapp/settings', { auto_reply: true }, empTok); ok(r.s === 403, 'employee cannot toggle auto-reply', r.s);
+  r = await call('PUT', '/whatsapp/settings', { auto_reply: 'yes' }, ownerToken); ok(r.s === 400, 'auto_reply must be boolean', r.s);
+  r = await call('PUT', '/whatsapp/settings', { auto_reply: true }, ownerToken); ok(r.s === 200, 'owner enables auto-reply', r);
+  let n0 = sent.length;
+  r = await hook(inbound('wamid.B1', 'Show me available products', '919000033333', 'Ravi Fan'));
+  ok(r.s === 200 && sent.length === n0 + 1 && sent[sent.length - 1].to === '919000033333', 'AI auto-reply sent to a new customer', { s: r.s, n: sent.length - n0 });
+  const ac = await convFor('919000033333'); const am = await msgsOf(ac.id); ok(am.some((m) => m.sender_type === 'AI') && am[0].sender_type === 'CUSTOMER', 'AI reply stored after the customer message', am.map((m) => m.sender_type));
+  n0 = sent.length;
+  r = await hook(wrap('smb_message_echoes', { message_echoes: [{ from: '919876543210', to: '919000033333', id: 'wamid.E9', timestamp: String(nowSec()), type: 'text', text: { body: 'Hi, this is the owner - I will handle this.' } }] }));
+  r = await hook(inbound('wamid.B2', 'Is it available in blue?', '919000033333', 'Ravi Fan'));
+  ok(sent.length === n0, 'AI stays quiet after the owner replies from the phone (human takeover)', sent.length - n0);
+  r = await call('PUT', '/whatsapp/settings', { auto_reply: false }, ownerToken);
+  n0 = sent.length; r = await hook(inbound('wamid.C1', 'Show me products', '919000044444', 'Quiet')); ok(sent.length === n0, 'no auto-reply when switched off', sent.length - n0);
+
+  // Simulator (authenticated, own store only)
+  r = await call('POST', '/whatsapp/simulate', { message: 'Show me products' }); ok(r.s === 401, 'simulator needs login', r.s);
+  r = await call('POST', '/whatsapp/simulate', { message: 'Show me available products' }, ownerToken); ok(r.s === 200 && r.j.autoReply && r.j.conversationId, 'simulator runs the same pipeline', r);
+  r = await call('GET', '/conversations', undefined, ownerToken); ok(r.j.some((c: any) => c.id === (r.j.find((x: any) => x.channel === 'WHATSAPP_SIMULATOR') || {}).id), 'simulator chats appear in the CRM');
+
+  // Conversation delete + disconnect
+  r = await call('DELETE', `/conversations/${ac.id}`, undefined, empTok); ok(r.s === 403, 'employee cannot delete a conversation', r.s);
+  r = await call('DELETE', `/conversations/${ac.id}`, undefined, ownerToken); ok(r.s === 200, 'owner deletes a conversation', r);
+  ok(((await db.prepare('SELECT COUNT(*) as n FROM messages WHERE conversation_id = ?').get(ac.id)) as any).n == 0, 'its messages are deleted too');
+  r = await call('DELETE', '/whatsapp/connection', undefined, empTok); ok(r.s === 403, 'employee cannot disconnect', r.s);
+  r = await call('DELETE', '/whatsapp/connection', undefined, ownerToken); ok(r.s === 200, 'owner disconnects WhatsApp', r);
+  ok(graphCalls.some((c) => c.method === 'DELETE' && c.path.endsWith('/999888777/subscribed_apps')), 'app unsubscribed from the WABA');
+  r = await call('GET', '/whatsapp/status', undefined, ownerToken); ok(r.j.connected === false && r.j.account === null, 'status after disconnect', r.j);
+  r = await hook(inbound('wamid.Z1', 'after disconnect', '919000055555')); ok(r.s === 200 && !(await convFor('919000055555')), 'webhooks after disconnect are ignored', r);
+  ok(((await db.prepare('SELECT COUNT(*) as n FROM audit_logs WHERE action LIKE ?').get('whatsapp.%')) as any).n >= 3, 'connect/disconnect/auto-reply are audited');
+  mock.close();
+}
+
 console.log('# misc');
 r = await call('GET', '/nope'); ok(r.s === 404, 'unknown api route -> 404 json', r);
 const bad = await fetch(base + '/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{bad' }); ok(bad.status === 400, 'malformed JSON -> 400', bad.status);

@@ -23,8 +23,8 @@ ShopMate AI is a production-oriented, multi-tenant retail commerce and managemen
    - Real calculated financial KPIs, daily sales trends, best-selling products, category shares.
    - Employee dashboard for order processing and floor stock lookup.
    - Conversation management CRM with automated AI summary generation.
-6. **Meta WhatsApp Webhook Simulator**:
-   - Live endpoint `/webhooks/whatsapp` supporting GET verification challenge and POST payload simulations.
+6. **WhatsApp (coexistence)**:
+   - Connect the store's existing WhatsApp Business app number (chats are kept) and see customer messages on the phone and in ShopMate. Signed webhook at `/api/webhooks/whatsapp`. Full guide: [docs/WHATSAPP.md](docs/WHATSAPP.md). An authenticated simulator is included for testing without Meta.
 
 ---
 

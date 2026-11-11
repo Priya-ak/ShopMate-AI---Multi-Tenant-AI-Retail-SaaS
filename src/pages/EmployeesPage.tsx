@@ -2,14 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { User } from '../types';
 import { BackButton } from '../components/BackButton';
-import { UserCheck, Plus, Mail, Phone, ShieldCheck, X, AlertCircle } from 'lucide-react';
+import { UserCheck, Plus, Mail, Phone, ShieldCheck, X, AlertCircle, Trash2 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 interface EmployeesPageProps {
   onBack?: () => void;
 }
 
 export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onBack }) => {
+  const { user: me } = useAuth();
+  const isOwner = me?.role === 'BUSINESS_OWNER';
   const [employees, setEmployees] = useState<User[]>([]);
+  const [toDelete, setToDelete] = useState<User | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -31,6 +38,21 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onBack }) => {
       console.error(err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteEmployee(toDelete.id);
+      setToDelete(null);
+      loadEmployees();
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to remove team member');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -87,12 +109,13 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onBack }) => {
                 <th className="py-3 px-3">Contact</th>
                 <th className="py-3 px-3">System Access</th>
                 <th className="py-3 px-4 text-right">Created</th>
+                {isOwner && <th className="py-3 px-4 text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {isLoading ? (
                 <tr>
-                  <td colSpan={5} className="text-center py-10 text-slate-400">Loading staff...</td>
+                  <td colSpan={isOwner ? 6 : 5} className="text-center py-10 text-slate-400">Loading staff...</td>
                 </tr>
               ) : (
                 employees.map((emp) => (
@@ -125,6 +148,22 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onBack }) => {
                     <td className="py-3 px-4 text-right text-slate-400 font-mono text-[11px]">
                       {emp.created_at?.slice(0, 10)}
                     </td>
+                    {isOwner && (
+                      <td className="py-3 px-4 text-right">
+                        {emp.role === 'EMPLOYEE' ? (
+                          <button
+                            onClick={() => { setDeleteError(null); setToDelete(emp); }}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition"
+                            title="Remove team member"
+                            aria-label={`Remove ${emp.name}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -132,6 +171,18 @@ export const EmployeesPage: React.FC<EmployeesPageProps> = ({ onBack }) => {
           </table>
         </div>
       </div>
+
+      {toDelete && (
+        <ConfirmDialog
+          title={`Remove ${toDelete.name}?`}
+          message="Their login stops working immediately. Orders and chats they handled are kept."
+          confirmLabel="Remove"
+          busy={deleting}
+          error={deleteError}
+          onConfirm={handleDelete}
+          onCancel={() => setToDelete(null)}
+        />
+      )}
 
       {/* Modal */}
       {isModalOpen && (

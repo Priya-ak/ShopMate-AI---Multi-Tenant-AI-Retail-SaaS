@@ -1,5 +1,6 @@
 import express, { NextFunction, Request, Response } from 'express';
 import { apiRouter } from './routes.js';
+import { captureWebhookBody } from './whatsapp.js';
 import { ensureApp } from './bootstrap.js';
 import { DatabaseNotConfiguredError, driver, schemaReport } from './db.js';
 
@@ -18,6 +19,8 @@ export function createApp() {
     if (req.method === 'OPTIONS') return res.sendStatus(200);
     next();
   });
+  // Webhooks need the exact raw bytes for signature checks, so they are read before the JSON parser.
+  app.use('/api/webhooks', captureWebhookBody);
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -32,6 +35,8 @@ export function createApp() {
       geminiConfigured: !!process.env.GEMINI_API_KEY,
       googleConfigured: !!process.env.GOOGLE_CLIENT_ID,
       superAdminConfigured: !!process.env.SUPERADMIN_EMAIL,
+      whatsappConfigured: !!(process.env.META_APP_ID && process.env.META_APP_SECRET && process.env.META_CONFIG_ID),
+      whatsappWebhookConfigured: !!(process.env.META_APP_SECRET && process.env.WHATSAPP_VERIFY_TOKEN),
     });
   });
 

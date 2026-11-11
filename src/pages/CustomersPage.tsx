@@ -2,14 +2,22 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../services/api';
 import { Customer } from '../types';
 import { BackButton } from '../components/BackButton';
-import { Users, Search, ShoppingBag, Phone, Mail, MapPin, Calendar, Plus, X } from 'lucide-react';
+import { Users, Search, ShoppingBag, Phone, Mail, MapPin, Calendar, Plus, X, Trash2 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 interface CustomersPageProps {
   onBack?: () => void;
 }
 
 export const CustomersPage: React.FC<CustomersPageProps> = ({ onBack }) => {
+  const { user } = useAuth();
+  const canDelete = user?.role === 'BUSINESS_OWNER';
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [toDelete, setToDelete] = useState<Customer | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
@@ -35,6 +43,22 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({ onBack }) => {
       console.error(err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteCustomer(toDelete.id);
+      setNotice(`${toDelete.name} was deleted.`);
+      setToDelete(null);
+      loadCustomers();
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete customer');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -115,18 +139,19 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({ onBack }) => {
                 <th className="py-3 px-3 text-center">Total Orders</th>
                 <th className="py-3 px-3 text-right">Lifetime Spent</th>
                 <th className="py-3 px-4 text-right">Member Since</th>
+                {canDelete && <th className="py-3 px-4 text-right">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {isLoading ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-slate-400">
+                  <td colSpan={canDelete ? 7 : 6} className="text-center py-12 text-slate-400">
                     Loading customers...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-slate-500">
+                  <td colSpan={canDelete ? 7 : 6} className="text-center py-12 text-slate-500">
                     No customers found.
                   </td>
                 </tr>
@@ -161,6 +186,18 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({ onBack }) => {
                     <td className="py-3 px-4 text-right text-slate-400 text-[11px] font-mono">
                       {c.created_at?.slice(0, 10)}
                     </td>
+                    {canDelete && (
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          onClick={() => { setDeleteError(null); setToDelete(c); }}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition"
+                          title="Delete customer"
+                          aria-label={`Delete ${c.name}`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -168,6 +205,24 @@ export const CustomersPage: React.FC<CustomersPageProps> = ({ onBack }) => {
           </table>
         </div>
       </div>
+
+      {notice && (
+        <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-800 text-emerald-200 text-xs flex items-center justify-between">
+          <span>{notice}</span>
+          <button onClick={() => setNotice(null)} aria-label="Dismiss"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+
+      {toDelete && (
+        <ConfirmDialog
+          title={`Delete ${toDelete.name}?`}
+          message="This removes the customer from your list. Customers who have placed orders cannot be deleted because order history must be kept."
+          busy={deleting}
+          error={deleteError}
+          onConfirm={handleDelete}
+          onCancel={() => setToDelete(null)}
+        />
+      )}
 
       {/* Add Customer Modal */}
       {isAddModalOpen && (

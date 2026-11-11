@@ -5,6 +5,7 @@ import { ProductImage } from '../components/ProductImage';
 import { BackButton } from '../components/BackButton';
 import { ImageUploadInput } from '../components/ImageUploadInput';
 import { Layers, Plus, Trash2, Edit2, AlertCircle, CheckCircle, X, Package } from 'lucide-react';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 interface CategoriesPageProps {
   onBack?: () => void;
@@ -74,11 +75,24 @@ export const CategoriesPage: React.FC<CategoriesPageProps> = ({ onBack }) => {
       return;
     }
 
+    setCatToDelete(cat);
+  };
+
+  const [catToDelete, setCatToDelete] = useState<ProductCategory | null>(null);
+  const [deletingCat, setDeletingCat] = useState(false);
+
+  const confirmDeleteCategory = async () => {
+    if (!catToDelete) return;
+    setDeletingCat(true);
     try {
-      await api.deleteCategory(cat.id);
+      await api.deleteCategory(catToDelete.id);
+      setCatToDelete(null);
       loadCategories();
     } catch (err: any) {
+      setCatToDelete(null);
       setPageError(err.message || 'Failed to delete category');
+    } finally {
+      setDeletingCat(false);
     }
   };
 
@@ -235,6 +249,16 @@ export const CategoriesPage: React.FC<CategoriesPageProps> = ({ onBack }) => {
             </form>
           </div>
         </div>
+      )}
+
+      {catToDelete && (
+        <ConfirmDialog
+          title={`Delete category "${catToDelete.name}"?`}
+          message="Empty categories can be deleted safely. Categories that still contain products are blocked."
+          busy={deletingCat}
+          onConfirm={confirmDeleteCategory}
+          onCancel={() => setCatToDelete(null)}
+        />
       )}
     </div>
   );

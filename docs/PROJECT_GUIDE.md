@@ -200,6 +200,9 @@ Each Overview card is loaded independently. If one query fails, the rest of the 
 banner names the failing section and the database message (visible to Super Admins only). Hit "include demo data" to
 add the sandbox tenant to the numbers.
 
+### 4.8 WhatsApp (coexistence) and delete actions
+Owners connect their existing WhatsApp Business app number from **WhatsApp & APIs**; customer messages (and messages typed on the phone) land in **Conversations**, and staff can reply from ShopMate. See [WHATSAPP.md](WHATSAPP.md). Owners can delete customers (only without orders), staff accounts and conversations, products and categories; every destructive action asks for confirmation and is written to the audit log.
+
 ## 5. Data model
 
 Main tables (tenant data carries `business_id`):
@@ -232,11 +235,12 @@ and `substr(created_at, 1, 10)` for day buckets.
 | `SUPERADMIN_PASSWORD` | Recommended | 8+ chars for password sign-in to `/superadmin` |
 | `GOOGLE_CLIENT_ID` | For Google sign-in | OAuth Web client ID; add your site under *Authorized JavaScript origins* |
 | `GEMINI_API_KEY` | For store AI chat | Gemini API key |
+| `META_APP_ID`, `META_CONFIG_ID`, `META_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_ENCRYPTION_KEY` | For WhatsApp | See [WHATSAPP.md](WHATSAPP.md); the secret ones are server-side only |
 | `SQLITE_PATH` | Tests only | Use a different SQLite file (the test suite sets this itself) |
 
 After changing variables on Vercel you must **redeploy** for them to take effect. Check
-`https://<your-site>/api/health` — it reports `database`, `geminiConfigured`, `googleConfigured` and
-`superAdminConfigured`.
+`https://<your-site>/api/health` — it reports `database`, `geminiConfigured`, `googleConfigured`, `superAdminConfigured`, `whatsappConfigured` and
+`whatsappWebhookConfigured`.
 
 ## 8. Running it
 

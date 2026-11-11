@@ -47,7 +47,7 @@ Data isolation is strictly enforced at the database and query layer using `busin
 ## 3. Autonomous AI Shopping Agent Architecture
 
 The AI shopping assistant operates on a backend-controlled tool execution pipeline:
-1. **User Message Ingestion**: Customer message arrives via `/api/ai/chat` or `/webhooks/whatsapp`.
+1. **User Message Ingestion**: Customer message arrives via `/api/ai/chat` or the signed WhatsApp webhook `/api/webhooks/whatsapp`.
 2. **Intent Recognition**:
    - Primary: Gemini 3.8 Flash with structured function declarations.
    - Fallback: Deterministic Retail Intent Classifier if Gemini API key is missing or quota is exceeded.

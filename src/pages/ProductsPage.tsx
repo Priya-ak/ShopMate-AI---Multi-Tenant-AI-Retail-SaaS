@@ -4,6 +4,7 @@ import { Product, ProductCategory } from '../types';
 import { ProductImage } from '../components/ProductImage';
 import { BackButton } from '../components/BackButton';
 import { ImageUploadInput } from '../components/ImageUploadInput';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import {
   Package,
   Plus,
@@ -213,13 +214,27 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({ onBack }) => {
 
   const [pageError, setPageError] = useState<string | null>(null);
 
-  const handleDeleteProduct = async (id: string, name: string) => {
-    setPageError(null);
+  const [productToDelete, setProductToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState(false);
+  const [deleteProductError, setDeleteProductError] = useState<string | null>(null);
+
+  const handleDeleteProduct = (id: string, name: string) => {
+    setDeleteProductError(null);
+    setProductToDelete({ id, name });
+  };
+
+  const confirmDeleteProduct = async () => {
+    if (!productToDelete) return;
+    setDeletingProduct(true);
+    setDeleteProductError(null);
     try {
-      await api.deleteProduct(id);
+      await api.deleteProduct(productToDelete.id);
+      setProductToDelete(null);
       loadProducts();
     } catch (err: any) {
-      setPageError(err.message || 'Failed to archive product');
+      setDeleteProductError(err.message || 'Failed to delete product');
+    } finally {
+      setDeletingProduct(false);
     }
   };
 
@@ -465,7 +480,7 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({ onBack }) => {
                     <button
                       onClick={() => handleDeleteProduct(p.id, p.name)}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition"
-                      title="Archive Product"
+                      title="Delete Product"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -681,6 +696,17 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({ onBack }) => {
             </form>
           </div>
         </div>
+      )}
+
+      {productToDelete && (
+        <ConfirmDialog
+          title={`Delete "${productToDelete.name}"?`}
+          message="It disappears from your store and the shopping page. Past orders that include it are not affected."
+          busy={deletingProduct}
+          error={deleteProductError}
+          onConfirm={confirmDeleteProduct}
+          onCancel={() => setProductToDelete(null)}
+        />
       )}
     </div>
   );

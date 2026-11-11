@@ -43,5 +43,7 @@ Base Endpoint: `/api`
 - `POST /api/ai/summarise` - Generate automated enquiry summary for store staff.
 
 ## Webhooks
-- `GET /webhooks/whatsapp` - Meta WhatsApp Webhook verification challenge handler.
-- `POST /webhooks/whatsapp` - Meta WhatsApp Webhook incoming message ingestion.
+- `GET /api/webhooks/whatsapp` - Meta webhook verification handshake.
+- `POST /api/webhooks/whatsapp` - Meta events (signature required).
+- `GET /api/whatsapp/status`, `POST /api/whatsapp/connect`, `PUT /api/whatsapp/settings`, `DELETE /api/whatsapp/connection`, `POST /api/whatsapp/conversations/:id/reply`, `POST /api/whatsapp/simulate` - see docs/WHATSAPP.md.
+- `DELETE /api/customers/:id`, `DELETE /api/employees/:id`, `DELETE /api/conversations/:id` - owner only.

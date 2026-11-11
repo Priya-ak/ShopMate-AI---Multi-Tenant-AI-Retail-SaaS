@@ -13,14 +13,27 @@ import {
   AlertCircle,
   Phone,
   RefreshCw,
+  Trash2,
+  Send,
+  Smartphone,
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 interface ConversationsPageProps {
   onBack?: () => void;
 }
 
 export const ConversationsPage: React.FC<ConversationsPageProps> = ({ onBack }) => {
+  const { user } = useAuth();
+  const isOwner = user?.role === 'BUSINESS_OWNER';
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [convToDelete, setConvToDelete] = useState<Conversation | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [search, setSearch] = useState('');
@@ -60,8 +73,47 @@ export const ConversationsPage: React.FC<ConversationsPageProps> = ({ onBack }) 
 
   const handleSelectConv = (c: Conversation) => {
     setSelectedConv(c);
+    setReplyText('');
+    setReplyError(null);
     setSummaryMsg(c.ai_summary || null);
     loadMessages(c.id);
+  };
+
+  const handleDeleteConversation = async () => {
+    if (!convToDelete) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteConversation(convToDelete.id);
+      const remaining = conversations.filter((c) => c.id !== convToDelete.id);
+      setConversations(remaining);
+      if (selectedConv?.id === convToDelete.id) {
+        setSelectedConv(remaining[0] || null);
+        setMessages([]);
+        if (remaining[0]) loadMessages(remaining[0].id);
+      }
+      setConvToDelete(null);
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete conversation');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleSendReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedConv || !replyText.trim()) return;
+    setSending(true);
+    setReplyError(null);
+    try {
+      await api.replyOnWhatsApp(selectedConv.id, replyText.trim());
+      setReplyText('');
+      await loadMessages(selectedConv.id);
+    } catch (err: any) {
+      setReplyError(err.message || 'Failed to send the message');
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleGenerateSummary = async () => {
@@ -183,6 +235,11 @@ export const ConversationsPage: React.FC<ConversationsPageProps> = ({ onBack }) 
                     <div className="text-[11px] text-slate-400 flex items-center gap-1">
                       <Phone className="w-3 h-3 text-slate-500" />
                       <span>{c.customer_phone || 'WhatsApp Guest'}</span>
+                      {c.channel === 'WHATSAPP' && (
+                        <span className="ml-auto flex items-center gap-1 text-emerald-400 text-[9px] font-bold">
+                          <Smartphone className="w-3 h-3" /> WhatsApp
+                        </span>
+                      )}
                     </div>
 
                     <div className="text-[11px] text-slate-300 truncate">
@@ -220,6 +277,16 @@ export const ConversationsPage: React.FC<ConversationsPageProps> = ({ onBack }) 
                     <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
                     <span>{isSummarising ? 'Summarising...' : 'Generate AI Summary'}</span>
                   </button>
+                  {isOwner && (
+                    <button
+                      onClick={() => { setDeleteError(null); setConvToDelete(selectedConv); }}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 border border-slate-700 transition"
+                      title="Delete conversation"
+                      aria-label="Delete conversation"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -261,6 +328,30 @@ export const ConversationsPage: React.FC<ConversationsPageProps> = ({ onBack }) 
                   </div>
                 ))}
               </div>
+
+              {selectedConv.channel === 'WHATSAPP' && (
+                <form onSubmit={handleSendReply} className="p-3 border-t border-slate-800 bg-slate-900/90 space-y-1.5">
+                  {replyError && <div className="text-[11px] text-rose-300">{replyError}</div>}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      maxLength={4000}
+                      placeholder="Reply on WhatsApp (also appears on your phone)..."
+                      className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={sending || !replyText.trim()}
+                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>{sending ? 'Sending...' : 'Send'}</span>
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           ) : (
             <div className="text-center py-20 rounded-2xl bg-slate-900 border border-slate-800 text-slate-500 text-xs">
@@ -269,6 +360,17 @@ export const ConversationsPage: React.FC<ConversationsPageProps> = ({ onBack }) 
           )}
         </div>
       </div>
+
+      {convToDelete && (
+        <ConfirmDialog
+          title={`Delete chat with ${convToDelete.customer_name}?`}
+          message="The conversation and its messages are removed from ShopMate. Chats on your WhatsApp phone are not affected."
+          busy={deleting}
+          error={deleteError}
+          onConfirm={handleDeleteConversation}
+          onCancel={() => setConvToDelete(null)}
+        />
+      )}
     </div>
   );
 };

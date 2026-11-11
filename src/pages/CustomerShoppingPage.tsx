@@ -207,6 +207,18 @@ export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ open
           </div>
         </div>
 
+        <div className="flex items-center gap-2">
+        {business?.phone && String(business.phone).replace(/\D/g, '').length >= 8 && (
+          <a
+            href={`https://wa.me/${String(business.phone).replace(/\D/g, '')}?text=${encodeURIComponent(`Hi ${business.name || ''}, I have a question about your products.`)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-2 transition"
+            title="Continue this chat on WhatsApp"
+          >
+            <span>Chat on WhatsApp</span>
+          </a>
+        )}
         <button
           onClick={openCartDrawer}
           className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-2 transition shadow-md shadow-indigo-600/20"
@@ -214,6 +226,7 @@ export const CustomerShoppingPage: React.FC<CustomerShoppingPageProps> = ({ open
           <ShoppingBag className="w-4 h-4" />
           <span>Cart ({cartItems.reduce((acc, i) => acc + i.quantity, 0)})</span>
         </button>
+        </div>
       </div>
 
       {/* Chat Area */}

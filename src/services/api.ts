@@ -2,6 +2,19 @@ import { Product, ProductCategory, Order, Customer, Conversation, Message, Inven
 
 const API_BASE = '/api';
 
+export interface WhatsAppStatus {
+  platform: { connectAvailable: boolean; webhookReady: boolean; appId: string | null; configId: string | null; graphVersion: string };
+  connected: boolean;
+  account: null | { display_phone: string | null; verified_name: string | null; mode: string; status: string; auto_reply: boolean; history_status: string | null; last_webhook_at: string | null; connected_at: string };
+}
+
+/** Parses a JSON API response and throws the server's user-safe message on failure. */
+async function jsonOrThrow(res: Response, fallback: string) {
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.error || fallback);
+  return body;
+}
+
 function getAuthHeaders(): HeadersInit {
   const token = localStorage.getItem('shopmate_token');
   const bizId = localStorage.getItem('shopmate_current_biz_id');
@@ -201,11 +214,7 @@ export const api = {
   },
 
   async deleteProduct(id: string) {
-    const res = await fetch(`${API_BASE}/products/${id}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    });
-    return res.json();
+    return jsonOrThrow(await fetch(`${API_BASE}/products/${id}`, { method: 'DELETE', headers: getAuthHeaders() }), 'Failed to delete product');
   },
 
   async bulkImportCsv(items: any[]) {
@@ -444,12 +453,41 @@ export const api = {
     return res.json();
   },
 
+  // WhatsApp (coexistence) -------------------------------------------------
+  async getWhatsAppStatus(): Promise<WhatsAppStatus> {
+    return jsonOrThrow(await fetch(`${API_BASE}/whatsapp/status`, { headers: getAuthHeaders() }), 'Failed to load WhatsApp status');
+  },
+
+  async connectWhatsApp(data: { code: string; phone_number_id: string; waba_id: string }) {
+    return jsonOrThrow(await fetch(`${API_BASE}/whatsapp/connect`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(data) }), 'Failed to connect WhatsApp');
+  },
+
+  async disconnectWhatsApp() {
+    return jsonOrThrow(await fetch(`${API_BASE}/whatsapp/connection`, { method: 'DELETE', headers: getAuthHeaders() }), 'Failed to disconnect WhatsApp');
+  },
+
+  async setWhatsAppAutoReply(auto_reply: boolean) {
+    return jsonOrThrow(await fetch(`${API_BASE}/whatsapp/settings`, { method: 'PUT', headers: getAuthHeaders(), body: JSON.stringify({ auto_reply }) }), 'Failed to update the setting');
+  },
+
+  async replyOnWhatsApp(conversationId: string, text: string) {
+    return jsonOrThrow(await fetch(`${API_BASE}/whatsapp/conversations/${conversationId}/reply`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ text }) }), 'Failed to send the message');
+  },
+
   async simulateWhatsAppWebhook(message: string, phone: string = '') {
-    const res = await fetch('/webhooks/whatsapp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: message, from: phone || undefined }),
-    });
-    return res.json();
+    return jsonOrThrow(await fetch(`${API_BASE}/whatsapp/simulate`, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify({ message, phone: phone || undefined }) }), 'Simulator failed');
+  },
+
+  // Deletes ----------------------------------------------------------------
+  async deleteCustomer(id: string) {
+    return jsonOrThrow(await fetch(`${API_BASE}/customers/${id}`, { method: 'DELETE', headers: getAuthHeaders() }), 'Failed to delete customer');
+  },
+
+  async deleteEmployee(id: string) {
+    return jsonOrThrow(await fetch(`${API_BASE}/employees/${id}`, { method: 'DELETE', headers: getAuthHeaders() }), 'Failed to remove team member');
+  },
+
+  async deleteConversation(id: string) {
+    return jsonOrThrow(await fetch(`${API_BASE}/conversations/${id}`, { method: 'DELETE', headers: getAuthHeaders() }), 'Failed to delete conversation');
   },
 };

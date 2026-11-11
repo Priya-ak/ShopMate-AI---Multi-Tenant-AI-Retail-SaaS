@@ -24,7 +24,7 @@ const DATABASE_URL = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
 export const driver: Driver = DATABASE_URL ? 'postgres' : 'sqlite';
 export const isPostgres = driver === 'postgres';
 
-const SCHEMA_VERSION = '2026-11-11.1';
+const SCHEMA_VERSION = '2026-11-12.1';
 
 // ---------------------------------------------------------------------------
 // SQL dialect helpers (pure functions, unit-tested)
@@ -451,6 +451,36 @@ const BASE_SCHEMA = `
     UNIQUE(business_id, provider)
   );
 
+  -- One connected WhatsApp number per business (Meta Embedded Signup / coexistence).
+  -- access_token_enc is AES-256-GCM encrypted and is never returned by any API.
+  CREATE TABLE IF NOT EXISTS whatsapp_accounts (
+    id TEXT PRIMARY KEY,
+    business_id TEXT NOT NULL,
+    waba_id TEXT NOT NULL,
+    phone_number_id TEXT NOT NULL,
+    display_phone TEXT,
+    verified_name TEXT,
+    access_token_enc TEXT NOT NULL,
+    mode TEXT DEFAULT 'COEXISTENCE',
+    status TEXT DEFAULT 'Connected',
+    auto_reply INTEGER DEFAULT 0,
+    history_status TEXT,
+    last_webhook_at TEXT,
+    connected_by TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(business_id) REFERENCES businesses(id) ON DELETE CASCADE,
+    UNIQUE(business_id),
+    UNIQUE(phone_number_id)
+  );
+
+  -- De-duplicates WhatsApp webhooks (Meta retries) and records which messages we already stored.
+  CREATE TABLE IF NOT EXISTS whatsapp_message_log (
+    wa_message_id TEXT PRIMARY KEY,
+    business_id TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
   CREATE TABLE IF NOT EXISTS audit_logs (
     id TEXT PRIMARY KEY,
     business_id TEXT,
@@ -567,6 +597,7 @@ const INDEXES = `
   CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
   CREATE INDEX IF NOT EXISTS idx_login_events_created ON login_events(created_at);
   CREATE INDEX IF NOT EXISTS idx_login_events_user ON login_events(user_id);
+  CREATE INDEX IF NOT EXISTS idx_conversations_biz_phone ON conversations(business_id, customer_phone);
 `;
 
 const TABLES = [

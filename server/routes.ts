@@ -16,6 +16,7 @@ import {
 import { authRouter } from './authRoutes.js';
 import { superAdminRouter } from './superadmin.js';
 import { appAssistantRouter } from './appAssistant.js';
+import { whatsappRouter } from './whatsapp.js';
 import { AccountError, sanitizeQuestions, serializeBusiness } from './accounts.js';
 import {
   runGeminiAgent,
@@ -27,6 +28,17 @@ import {
 
 export { authMiddleware, optionalAuthMiddleware, resolveBusinessId };
 export type { AuthUser };
+
+/** Best-effort audit trail for destructive actions (never blocks the request). */
+async function writeAudit(req: Request, action: string, entityType: string, entityId: string, details?: any) {
+  try {
+    const u = (req as any).user as AuthUser | undefined;
+    await db.prepare('INSERT INTO audit_logs (id, business_id, user_id, action, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(newId('aud'), u?.business_id || null, u?.id || null, action, entityType, entityId, details ? JSON.stringify(details) : null);
+  } catch (e: any) {
+    console.error('[audit] failed:', e?.message);
+  }
+}
 
 /** Safe error response for store APIs: log the real cause, never leak database internals to the browser. */
 function apiError(res: Response, err: any, fallback = 'Something went wrong on our side. Please try again.') {
@@ -748,6 +760,27 @@ apiRouter.post('/customers', authMiddleware, async (req: Request, res: Response)
   }
 });
 
+// DELETE /api/customers/:id  (owner only). Customers with order history are kept so sales records stay intact.
+apiRouter.delete('/customers/:id', authMiddleware, requireRole('BUSINESS_OWNER'), async (req: Request, res: Response) => {
+  try {
+    const bizId = await resolveBusinessId(req);
+    const customer = await db.prepare('SELECT id, name, phone FROM customers WHERE id = ? AND business_id = ?').get(req.params.id, bizId) as any;
+    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+    const { n } = await db.prepare('SELECT COUNT(*) as n FROM orders WHERE customer_id = ? AND business_id = ?').get(customer.id, bizId) as any;
+    if (Number(n) > 0) {
+      return res.status(409).json({
+        error: `${customer.name} has ${n} order${Number(n) === 1 ? '' : 's'} on record, so they cannot be deleted. Order history must be kept for your accounts.`,
+        code: 'HAS_ORDERS',
+      });
+    }
+    await db.prepare('DELETE FROM customers WHERE id = ? AND business_id = ?').run(customer.id, bizId);
+    await writeAudit(req, 'customer.delete', 'customer', customer.id, { name: customer.name });
+    res.json({ message: 'Customer deleted' });
+  } catch (err: any) {
+    return apiError(res, err);
+  }
+});
+
 // -------------------------------------------------------------
 // ORDERS
 // -------------------------------------------------------------
@@ -1038,10 +1071,13 @@ apiRouter.post('/ai/recommendations', async (req: Request, res: Response) => {
   res.json(results);
 });
 
-// POST /api/ai/summarise
-apiRouter.post('/ai/summarise', async (req: Request, res: Response) => {
-  const { conversationId } = req.body;
-  if (!conversationId) return res.status(400).json({ error: 'conversationId required' });
+// POST /api/ai/summarise  (staff only, own store only)
+apiRouter.post('/ai/summarise', authMiddleware, requireRole('BUSINESS_OWNER', 'EMPLOYEE'), async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
+  const { conversationId } = req.body || {};
+  if (typeof conversationId !== 'string' || !conversationId) return res.status(400).json({ error: 'conversationId required' });
+  const owned = await db.prepare('SELECT id FROM conversations WHERE id = ? AND business_id = ?').get(conversationId, bizId);
+  if (!owned) return res.status(404).json({ error: 'Conversation not found' });
 
   const msgs = await db.prepare('SELECT sender_type, content FROM messages WHERE conversation_id = ? ORDER BY created_at ASC').all(conversationId) as any[];
   if (msgs.length === 0) {
@@ -1049,7 +1085,7 @@ apiRouter.post('/ai/summarise', async (req: Request, res: Response) => {
   }
 
   const summary = `Customer engaged in shopping enquiry (${msgs.length} messages). Discussed products, checked size/stock availability, and reviewed cart options.`;
-  await db.prepare('UPDATE conversations SET ai_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(summary, conversationId);
+  await db.prepare('UPDATE conversations SET ai_summary = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND business_id = ?').run(summary, conversationId, bizId);
 
   res.json({ summary });
 });
@@ -1072,11 +1108,32 @@ apiRouter.get('/conversations', authMiddleware, async (req: Request, res: Respon
   res.json(convs);
 });
 
-apiRouter.get('/conversations/:id/messages', optionalAuthMiddleware, async (req: Request, res: Response) => {
+apiRouter.get('/conversations/:id/messages', authMiddleware, requireRole('BUSINESS_OWNER', 'EMPLOYEE', 'SUPER_ADMIN'), async (req: Request, res: Response) => {
+  const bizId = await resolveBusinessId(req);
   const msgs = await db.prepare(`
-    SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC
-  `).all(req.params.id);
+    SELECT m.* FROM messages m
+    JOIN conversations c ON c.id = m.conversation_id
+    WHERE m.conversation_id = ? AND c.business_id = ?
+    ORDER BY m.created_at ASC
+  `).all(req.params.id, bizId);
   res.json(msgs);
+});
+
+// DELETE /api/conversations/:id  (owner only; messages are removed with it)
+apiRouter.delete('/conversations/:id', authMiddleware, requireRole('BUSINESS_OWNER'), async (req: Request, res: Response) => {
+  try {
+    const bizId = await resolveBusinessId(req);
+    const conv = await db.prepare('SELECT id, customer_name FROM conversations WHERE id = ? AND business_id = ?').get(req.params.id, bizId) as any;
+    if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+    await db.transaction(async () => {
+      await db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conv.id);
+      await db.prepare('DELETE FROM conversations WHERE id = ? AND business_id = ?').run(conv.id, bizId);
+    });
+    await writeAudit(req, 'conversation.delete', 'conversation', conv.id, { customer: conv.customer_name });
+    res.json({ message: 'Conversation deleted' });
+  } catch (err: any) {
+    return apiError(res, err);
+  }
 });
 
 // -------------------------------------------------------------
@@ -1115,6 +1172,23 @@ apiRouter.post('/employees', authMiddleware, requireRole('BUSINESS_OWNER'), asyn
     `).run(id, email.trim().toLowerCase(), await hashPassword(password), name, bizId, phone || null);
 
     res.status(201).json({ id, name, email, role: 'EMPLOYEE' });
+  } catch (err: any) {
+    return apiError(res, err);
+  }
+});
+
+// DELETE /api/employees/:id  (owner only; removes the staff login, never the owner)
+apiRouter.delete('/employees/:id', authMiddleware, requireRole('BUSINESS_OWNER'), async (req: Request, res: Response) => {
+  try {
+    const bizId = await resolveBusinessId(req);
+    const me = (req as any).user as AuthUser;
+    if (req.params.id === me.id) return res.status(400).json({ error: 'You cannot remove your own account here.', code: 'SELF_DELETE' });
+    const emp = await db.prepare(`SELECT id, name, role FROM users WHERE id = ? AND business_id = ?`).get(req.params.id, bizId) as any;
+    if (!emp) return res.status(404).json({ error: 'Team member not found' });
+    if (emp.role !== 'EMPLOYEE') return res.status(403).json({ error: 'Only staff accounts can be removed.', code: 'NOT_EMPLOYEE' });
+    await db.prepare(`DELETE FROM users WHERE id = ? AND business_id = ? AND role = 'EMPLOYEE'`).run(emp.id, bizId);
+    await writeAudit(req, 'employee.delete', 'user', emp.id, { name: emp.name });
+    res.json({ message: 'Team member removed' });
   } catch (err: any) {
     return apiError(res, err);
   }
@@ -1256,38 +1330,5 @@ apiRouter.put('/integrations/:id', authMiddleware, async (req: Request, res: Res
   res.json({ message: 'Integration updated' });
 });
 
-// WhatsApp Webhook Simulator & Meta verification endpoint
-apiRouter.get('/webhooks/whatsapp', async (req: Request, res: Response) => {
-  // Support Meta WhatsApp Webhook verification challenge
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === 'shopmate_verify_token_2026') {
-    return res.status(200).send(challenge);
-  }
-  res.json({ status: 'WhatsApp webhook ready', timestamp: new Date().toISOString() });
-});
-
-apiRouter.post('/webhooks/whatsapp', async (req: Request, res: Response) => {
-  try {
-    const payload = req.body;
-    console.log('[WhatsApp Webhook Received]', JSON.stringify(payload, null, 2));
-
-    // Handle incoming message simulation
-    const fromNumber = payload.from || payload.contacts?.[0]?.wa_id || '';
-    const messageBody = payload.text || payload.messages?.[0]?.text?.body || 'Hello';
-    const firstBiz = await db.prepare('SELECT id FROM businesses WHERE is_active = 1 ORDER BY COALESCE(is_demo, 0) DESC, created_at ASC LIMIT 1').get() as { id: string } | undefined;
-    const bizId = payload.businessId || firstBiz?.id || '';
-
-    const aiRes = await runGeminiAgent(bizId, messageBody);
-
-    res.json({
-      status: 'success',
-      autoReply: aiRes.reply,
-      engine: aiRes.engine,
-    });
-  } catch (err: any) {
-    return apiError(res, err);
-  }
-});
+// WhatsApp (webhook, connect, reply, simulator) lives in server/whatsapp.ts
+apiRouter.use(whatsappRouter);

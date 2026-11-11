@@ -65,6 +65,10 @@ are searchable and filterable and can be exported to CSV.
 * Every sign-in (successful or failed, password / Google / demo / registration) is recorded in `login_events`
   with method, IP and user agent. No passwords or tokens are stored there.
 
+## 4b. WhatsApp (optional)
+Add `META_APP_ID`, `META_CONFIG_ID`, `META_APP_SECRET`, `WHATSAPP_VERIFY_TOKEN` (and ideally `WHATSAPP_ENCRYPTION_KEY`), set the Meta webhook callback to
+`https://YOUR-DOMAIN/api/webhooks/whatsapp`, then redeploy. Step-by-step setup, limits and the list of items still to verify with a real number are in [WHATSAPP.md](WHATSAPP.md).
+
 ## 5. Demo personas
 
 "One-Click Demo Personas" create a sandbox on demand (`POST /api/auth/demo-login`, no credentials):
