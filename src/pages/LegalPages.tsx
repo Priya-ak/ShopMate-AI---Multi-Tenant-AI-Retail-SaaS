@@ -16,14 +16,14 @@ const List: React.FC<{ items: string[] }> = ({ items }) => (
   </ul>
 );
 
-const { company, email, lastUpdated } = LEGAL_CONTACT;
+const { company, operator, email, lastUpdated } = LEGAL_CONTACT;
 
 function Privacy() {
   return (
     <>
       <p>{company} is a software service that lets retail shops manage products, orders and customer conversations, with an AI assistant that answers customer questions using the shop's own catalogue. This policy explains what data we handle and why.</p>
       <Section title="Who is responsible for the data">
-        <p>Each shop that uses {company} decides what customer information it keeps and is the controller of its own customers' data. {company} processes that data on the shop's behalf to provide the service. For shop owner and staff accounts, {company} is the controller.</p>
+        <p>{company} is operated by {operator}. Each shop that uses {company} decides what customer information it keeps and is the controller of its own customers' data. {company} processes that data on the shop's behalf to provide the service. For shop owner and staff accounts, {company} is the controller.</p>
       </Section>
       <Section title="What we collect">
         <List items={[
@@ -137,7 +137,7 @@ export const LegalPage: React.FC<{ kind: LegalKind }> = ({ kind }) => (
   <article className="max-w-3xl mx-auto py-6 space-y-6 text-slate-300">
     <header className="space-y-1">
       <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">{TITLES[kind]}</h1>
-      <p className="text-xs text-slate-500">Last updated {lastUpdated}</p>
+      <p className="text-xs text-slate-500">Last updated {lastUpdated} · {company} is operated by {operator} · {email}</p>
     </header>
     {kind === 'privacy' && <Privacy />}
     {kind === 'terms' && <Terms />}

@@ -1,9 +1,10 @@
 /**
- * Public contact details shown on /privacy, /terms and /data-deletion.
- * Meta App Review requires a real, monitored address. EDIT THESE before switching the Meta app to Live.
+ * Public contact details shown on /privacy, /terms, /data-deletion and the landing page footer.
+ * Meta App Review requires a real, monitored address.
  */
 export const LEGAL_CONTACT = {
   company: 'ShopMate AI',
-  email: 'support@YOUR-DOMAIN.com', // TODO: replace with a monitored mailbox
-  lastUpdated: '11 November 2026',
+  operator: 'Kesavan Arul (trading as codexkesavan)',
+  email: 'codexk7@gmail.com',
+  lastUpdated: '12 November 2026',
 };

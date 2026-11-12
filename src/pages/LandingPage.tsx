@@ -395,7 +395,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           <div className="text-slate-500 text-center md:text-right">
-            &copy; 2026 ShopMate AI Technologies. Built for retail growth.
+            &copy; 2026 ShopMate AI, operated by Kesavan Arul (codexkesavan). Contact: codexk7@gmail.com
           </div>
         </div>
       </footer>
